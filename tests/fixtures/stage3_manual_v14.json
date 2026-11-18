@@ -1,0 +1,91 @@
+{
+  "schema_version": "stock-v4-manual-v1",
+  "price_mode": "ASSUMPTION",
+  "initial_cash": "10000.00",
+  "calendar": [
+    "2026-10-16",
+    "2026-10-19",
+    "2026-10-20",
+    "2026-10-21"
+  ],
+  "cutoff": "2026-10-20T15:00:00+08:00",
+  "instruments": {
+    "510001.SH": 100
+  },
+  "nodes": [
+    {
+      "id": "buy",
+      "etf": "510001.SH",
+      "at": "2026-10-16T09:35:00+08:00",
+      "action": "BUY",
+      "size_mode": "SHARES",
+      "size": 5000
+    },
+    {
+      "id": "add",
+      "etf": "510001.SH",
+      "at": "2026-10-19T09:35:00+08:00",
+      "action": "ADD",
+      "size_mode": "SHARES",
+      "size": 4000
+    },
+    {
+      "id": "reduce",
+      "etf": "510001.SH",
+      "at": "2026-10-19T10:35:00+08:00",
+      "action": "REDUCE",
+      "size_mode": "SHARES",
+      "size": 4500
+    },
+    {
+      "id": "sell",
+      "etf": "510001.SH",
+      "at": "2026-10-20T09:35:00+08:00",
+      "action": "SELL",
+      "size_mode": "ALL",
+      "size": null
+    }
+  ],
+  "quotes": [
+    {
+      "kind": "quote",
+      "id": "q1",
+      "etf": "510001.SH",
+      "observed_at": "2026-10-16T09:36:00+08:00",
+      "price_cny": "1.000",
+      "source": "frozen:V1.4-assumption",
+      "tradeable": true,
+      "price_kind": "ASSUMED"
+    },
+    {
+      "kind": "quote",
+      "id": "q2",
+      "etf": "510001.SH",
+      "observed_at": "2026-10-19T09:36:00+08:00",
+      "price_cny": "1.100",
+      "source": "frozen:V1.4-assumption",
+      "tradeable": true,
+      "price_kind": "ASSUMED"
+    },
+    {
+      "kind": "quote",
+      "id": "q3",
+      "etf": "510001.SH",
+      "observed_at": "2026-10-19T10:36:00+08:00",
+      "price_cny": "1.200",
+      "source": "frozen:V1.4-assumption",
+      "tradeable": true,
+      "price_kind": "ASSUMED"
+    },
+    {
+      "kind": "quote",
+      "id": "q4",
+      "etf": "510001.SH",
+      "observed_at": "2026-10-20T09:36:00+08:00",
+      "price_cny": "1.100",
+      "source": "frozen:V1.4-assumption",
+      "tradeable": true,
+      "price_kind": "ASSUMED"
+    }
+  ]
+}

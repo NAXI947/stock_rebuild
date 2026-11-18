@@ -1,0 +1,98 @@
+{
+  "schema": "stock-v4-frozen-replay-v1",
+  "input_kind": "FROZEN",
+  "namespace": "stage1:demo",
+  "calendar": [
+    "2026-10-16",
+    "2026-10-19",
+    "2026-10-20",
+    "2026-10-21"
+  ],
+  "instruments": {
+    "510001.SH": 100,
+    "159001.SZ": 100
+  },
+  "events": [
+    {
+      "kind": "report",
+      "report_json": "{\n  \"schema_version\": \"hermes_sector_rotation_v1\",\n  \"report_id\": \"entry\",\n  \"trade_date\": \"2026-10-16\",\n  \"generated_at\": \"2026-10-16T09:35:00+08:00\",\n  \"data_as_of\": \"2026-10-16T09:34:00+08:00\",\n  \"expires_at\": \"2026-10-16T15:00:00+08:00\",\n  \"status\": \"PARTIAL\",\n  \"summary\": \"冻结样本\",\n  \"warnings\": [\n    \"IOPV_MISSING\",\n    \"CHAIN_GAP\"\n  ],\n  \"sectors\": [\n    {\n      \"kaipanla_plate_id\": \"A\",\n      \"sector_name\": \"kaipanla:A\",\n      \"observation_state\": \"新增\",\n      \"signal\": \"STRENGTHENING\",\n      \"risk_level\": \"MEDIUM\",\n      \"reasons\": [\n        \"冻结示例\"\n      ],\n      \"risks\": [],\n      \"sources\": [\n        \"frozen:entry:kaipanla:A\"\n      ],\n      \"evidence_status\": \"PARTIAL\",\n      \"support_withdrawn\": false,\n      \"validation_status\": \"VERIFIED\",\n      \"identity_status\": \"FROZEN_VERIFIED\",\n      \"evidence_valid\": true\n    }\n  ],\n  \"research_context\": {\n    \"evidence_key\": \"entry\"\n  },\n  \"coverage_ratio\": \"0.60\"\n}\n",
+      "candidates": [
+        {
+          "etf": "510001.SH",
+          "sector_id": "kaipanla:A",
+          "rank": 1,
+          "mapping_ref": "frozen:penetration:v1"
+        }
+      ],
+      "judgments": []
+    },
+    {
+      "kind": "quote",
+      "id": "entry-price",
+      "etf": "510001.SH",
+      "observed_at": "2026-10-16T09:36:00+08:00",
+      "received_at": "2026-10-16T09:36:00+08:00",
+      "price_cny": "10.00",
+      "source": "frozen:test",
+      "tradeable": true,
+      "revision": 0
+    },
+    {
+      "kind": "report",
+      "report_json": "{\n  \"schema_version\": \"hermes_sector_rotation_v1\",\n  \"report_id\": \"weak\",\n  \"trade_date\": \"2026-10-16\",\n  \"generated_at\": \"2026-10-16T10:35:00+08:00\",\n  \"data_as_of\": \"2026-10-16T09:34:00+08:00\",\n  \"expires_at\": \"2026-10-16T15:00:00+08:00\",\n  \"status\": \"PARTIAL\",\n  \"summary\": \"冻结样本\",\n  \"warnings\": [\n    \"IOPV_MISSING\",\n    \"CHAIN_GAP\"\n  ],\n  \"sectors\": [\n    {\n      \"kaipanla_plate_id\": \"A\",\n      \"sector_name\": \"kaipanla:A\",\n      \"observation_state\": \"减弱\",\n      \"signal\": \"WEAKENING\",\n      \"risk_level\": \"MEDIUM\",\n      \"reasons\": [\n        \"冻结示例\"\n      ],\n      \"risks\": [],\n      \"sources\": [\n        \"frozen:weak:kaipanla:A\"\n      ],\n      \"evidence_status\": \"PARTIAL\",\n      \"support_withdrawn\": false,\n      \"validation_status\": \"VERIFIED\",\n      \"identity_status\": \"FROZEN_VERIFIED\",\n      \"evidence_valid\": true\n    }\n  ],\n  \"research_context\": {\n    \"evidence_key\": \"weak\"\n  },\n  \"coverage_ratio\": \"0.60\"\n}\n",
+      "candidates": [],
+      "judgments": []
+    },
+    {
+      "kind": "quote",
+      "id": "t1-blocked",
+      "etf": "510001.SH",
+      "observed_at": "2026-10-16T10:36:00+08:00",
+      "received_at": "2026-10-16T10:36:00+08:00",
+      "price_cny": "11.00",
+      "source": "frozen:test",
+      "tradeable": true,
+      "revision": 0
+    },
+    {
+      "kind": "quote",
+      "id": "t1-reduce",
+      "etf": "510001.SH",
+      "observed_at": "2026-10-19T09:36:00+08:00",
+      "received_at": "2026-10-19T09:36:00+08:00",
+      "price_cny": "11.00",
+      "source": "frozen:test",
+      "tradeable": true,
+      "revision": 0
+    },
+    {
+      "kind": "report",
+      "report_json": "{\n  \"schema_version\": \"hermes_sector_rotation_v1\",\n  \"report_id\": \"repeat-weak\",\n  \"trade_date\": \"2026-10-19\",\n  \"generated_at\": \"2026-10-19T10:35:00+08:00\",\n  \"data_as_of\": \"2026-10-19T09:34:00+08:00\",\n  \"expires_at\": \"2026-10-19T15:00:00+08:00\",\n  \"status\": \"PARTIAL\",\n  \"summary\": \"冻结样本\",\n  \"warnings\": [\n    \"IOPV_MISSING\",\n    \"CHAIN_GAP\"\n  ],\n  \"sectors\": [\n    {\n      \"kaipanla_plate_id\": \"A\",\n      \"sector_name\": \"kaipanla:A\",\n      \"observation_state\": \"减弱\",\n      \"signal\": \"WEAKENING\",\n      \"risk_level\": \"MEDIUM\",\n      \"reasons\": [\n        \"冻结示例\"\n      ],\n      \"risks\": [],\n      \"sources\": [\n        \"frozen:repeat-weak:kaipanla:A\"\n      ],\n      \"evidence_status\": \"PARTIAL\",\n      \"support_withdrawn\": false,\n      \"validation_status\": \"VERIFIED\",\n      \"identity_status\": \"FROZEN_VERIFIED\",\n      \"evidence_valid\": true\n    }\n  ],\n  \"research_context\": {\n    \"evidence_key\": \"repeat-weak\"\n  },\n  \"coverage_ratio\": \"0.60\"\n}\n",
+      "candidates": [],
+      "judgments": []
+    },
+    {
+      "kind": "report",
+      "report_json": "{\n  \"schema_version\": \"hermes_sector_rotation_v1\",\n  \"report_id\": \"retreat\",\n  \"trade_date\": \"2026-10-20\",\n  \"generated_at\": \"2026-10-20T14:05:00+08:00\",\n  \"data_as_of\": \"2026-10-20T09:34:00+08:00\",\n  \"expires_at\": \"2026-10-20T15:00:00+08:00\",\n  \"status\": \"PARTIAL\",\n  \"summary\": \"冻结样本\",\n  \"warnings\": [\n    \"IOPV_MISSING\",\n    \"CHAIN_GAP\"\n  ],\n  \"sectors\": [\n    {\n      \"kaipanla_plate_id\": \"A\",\n      \"sector_name\": \"kaipanla:A\",\n      \"observation_state\": \"撤回\",\n      \"signal\": \"WEAKENING\",\n      \"risk_level\": \"MEDIUM\",\n      \"reasons\": [\n        \"冻结示例\"\n      ],\n      \"risks\": [],\n      \"sources\": [\n        \"frozen:retreat:kaipanla:A\"\n      ],\n      \"evidence_status\": \"PARTIAL\",\n      \"support_withdrawn\": true,\n      \"validation_status\": \"VERIFIED\",\n      \"identity_status\": \"FROZEN_VERIFIED\",\n      \"evidence_valid\": true\n    }\n  ],\n  \"research_context\": {\n    \"evidence_key\": \"retreat\"\n  },\n  \"coverage_ratio\": \"0.60\"\n}\n",
+      "candidates": [],
+      "judgments": [
+        {
+          "sector_id": "kaipanla:A",
+          "phase": "RETREAT",
+          "evidence_ref": "frozen:retreat:kaipanla:A"
+        }
+      ]
+    },
+    {
+      "kind": "quote",
+      "id": "retreat-sale",
+      "etf": "510001.SH",
+      "observed_at": "2026-10-20T14:06:00+08:00",
+      "received_at": "2026-10-20T14:06:00+08:00",
+      "price_cny": "12.00",
+      "source": "frozen:test",
+      "tradeable": true,
+      "revision": 0
+    }
+  ]
+}

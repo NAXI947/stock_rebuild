@@ -1,0 +1,141 @@
+name: Stock V4 Verify and Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.15-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+        env:
+          POSTGRES_USER: stock_v4_test
+          POSTGRES_PASSWORD: stock_v4_ci_test_only
+          POSTGRES_DB: stock_v4_test
+        ports: ["54320:5432"]
+        options: >-
+          --health-cmd="pg_isready -U stock_v4_test -d stock_v4_test"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+      redis:
+        image: redis:7.4.12@sha256:2e3eb11462c4e3759e6972678dd051d150ff54b1e60714b3c33b701260172a90
+        ports: ["63794:6379"]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=5s --health-retries=10
+    env:
+      APP_ENV: test
+      DISABLE_EXTERNAL_PROVIDER_HTTP: "true"
+      ENABLE_OFFICIAL_COLLECTION: "false"
+      ENABLE_QQ_PUSH: "false"
+      ENABLE_AGENT_WRITE_TOOLS: "false"
+      ENABLE_HERMES_SCHEDULE: "false"
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12.16'
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '22.22.0'
+      - name: Install locked Python dependencies
+        run: python -m pip install --require-hashes -r requirements-stage2.lock
+      - name: Run isolated database, Redis and frozen acceptance tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          export STAGE1_TEST_ROOT="$RUNNER_TEMP/stock-v4-stage1"
+          export STAGE2_TEST_ENV_FILE="$RUNNER_TEMP/stock-v4-test.env"
+          export OCTOP_DECISION_ACCEPTANCE_FILE="$GITHUB_WORKSPACE/tests/fixtures/octop_direction_frozen_ci.json"
+          mkdir -p "$STAGE1_TEST_ROOT"
+          cat > "$STAGE2_TEST_ENV_FILE" <<'ENV'
+          APP_ENV=test
+          DATABASE_URL=postgresql://stock_v4_test:stock_v4_ci_test_only@127.0.0.1:54320/stock_v4_test
+          REDIS_URL=redis://127.0.0.1:63794/1
+          REDIS_KEY_PREFIX=stock-v4:test:
+          AUTO_RUN_NAMESPACE=stock-v4:test:baseline
+          ENV
+          test -f tests/test_migration_upgrade.py
+          STAGE2_MIGRATION_ENV_FILE="$STAGE2_TEST_ENV_FILE" \
+            python -B -m unittest discover -s tests -p test_migration_upgrade.py -q
+          python -B -m unittest discover -s tests -q
+      - name: Check the frontend
+        run: |
+          node --check web/app.js
+          node --check web/data-updates.js
+          node --check web/template-layout.js
+          node --test tests/test_data_coverage_ui.mjs
+          node --test tests/test_left_right_ui.mjs
+      - name: Build and smoke-test both images
+        if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build -t stock-v4-backend:verified -f Dockerfile .
+          docker build -t stock-v4-web:verified -f web/Dockerfile .
+          docker run --rm --network none --read-only --cap-drop ALL stock-v4-backend:verified python -m modules.strategy_hermes.runtime smoke --offline
+          docker run --rm stock-v4-web:verified nginx -t
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+      - name: Build and smoke-test the release images
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_label="org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
+          revision_label="org.opencontainers.image.revision=$GITHUB_SHA"
+          docker build --label "$source_label" --label "$revision_label" -t stock-v4-backend:verified -f Dockerfile .
+          docker build --label "$source_label" --label "$revision_label" -t stock-v4-web:verified -f web/Dockerfile .
+          docker run --rm --network none --read-only --cap-drop ALL stock-v4-backend:verified python -m modules.strategy_hermes.runtime smoke --offline
+          docker run --rm stock-v4-web:verified nginx -t
+      - name: Publish the tested images and record their digests
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          publish() {
+            local component="$1" repository tag digest log
+            repository="ghcr.io/$owner/stock-v4-$component"
+            tag="$repository:$GITHUB_SHA"
+            log="$RUNNER_TEMP/stock-v4-push-$component.log"
+            docker tag "stock-v4-$component:verified" "$tag" || return 1
+            docker push "$tag" | tee "$log" >&2 || return 1
+            digest="$(awk -v sha="$GITHUB_SHA:" '$1 == sha && $2 == "digest:" {print $3}' "$log")"
+            [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+            printf '%s@%s\n' "$repository" "$digest"
+          }
+          backend="$(publish backend)"
+          web="$(publish web)"
+          printf '%s\n' \
+            "BUILD_RUN_ID=$GITHUB_RUN_ID" "BUILD_COMMIT=$GITHUB_SHA" \
+            "BACKEND_IMAGE=$backend" "WEB_IMAGE=$web" > "$RUNNER_TEMP/release.env"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: stock-v4-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release.env
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,14 @@
+🛠️ 【ETF资料维护｜{{slot}}】
+📅 {{business_date}} · {{status}}
+━━━━━━━━━━━━━━
+🗂️ 映射覆盖：{{mapping_counts}} (版本 {{mapping_version}})
+📆 日历覆盖：至 {{calendar_end}}
+
+📋 同步清单
+{{items}}
+
+⚖️ 权重基准：{{weight_sources}}
+⚠️ 待补异常：{{pending_items}}
+💡 研判影响：{{research_impact}}
+━━━━━━━━━━━━━━
+🆔 {{task_id}}

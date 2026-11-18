@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+*.sqlite3*
+/runtime/
+/secrets/
+/data/
+/outputs/
+*.pem
+*.key
+.release*.env
+stock-rebuild-github-deploy*

@@ -1,0 +1,85 @@
+{
+  "schema_version": "hermes_sector_rotation_v1",
+  "report_id": "hermes_rotation_20261027_110000_fec10001",
+  "trade_date": "2026-10-27",
+  "generated_at": "2026-10-27T11:00:00+08:00",
+  "data_as_of": "2026-10-27T10:58:00+08:00",
+  "expires_at": "2026-10-27T11:30:00+08:00",
+  "status": "PARTIAL",
+  "summary": "本轮板块轮动：电子材料（加强）。",
+  "sectors": [
+    {
+      "sector_name": "电子材料",
+      "kaipanla_plate_id": null,
+      "signal": "STRENGTHENING",
+      "risk_level": "MEDIUM",
+      "direction_id": null,
+      "observation_state": null,
+      "support_withdrawn": false,
+      "evidence_status": "PARTIAL",
+      "validation_status": "LEGACY_UNVERIFIED",
+      "fact_validation": {},
+      "identity_status": "LEGACY_UNVERIFIED",
+      "evidence_valid": false,
+      "core_stock_codes": [],
+      "reasons": [
+        "局部可见增强"
+      ],
+      "risks": [],
+      "sources": [
+        "tushare 行情快照 snapshot=sample_1",
+        "时间口径：系统采集观察时间；上游仅提供交易日"
+      ]
+    }
+  ],
+  "warnings": [
+    "data_as_of 为系统采集观察时间；上游仅提供交易日，不代表精确成交时间。"
+  ],
+  "time_policy": "LEGACY_FIXED_WINDOW",
+  "planned_slot_at": null,
+  "round_id": null,
+  "attempt_id": null,
+  "focus_list_complete": false,
+  "direction_technical_gaps": [],
+  "collection_diagnostics": {
+    "export": {},
+    "market_feed": {},
+    "schema_version": "hermes-collection-diagnostics-v2",
+    "captured_at": "2026-10-27T11:00:00+08:00",
+    "snapshot_id": "sample_1"
+  },
+  "research_observations": [
+    {
+      "sector_id": null,
+      "sector_name": "电子材料",
+      "research_name": "电子材料",
+      "identity_status": "UNVERIFIED",
+      "direction_id": null,
+      "core_stock_codes": [],
+      "support_withdrawn": false,
+      "observation_state": "加强",
+      "evidence_status": "PARTIAL",
+      "validation_status": "LEGACY_UNVERIFIED",
+      "signal": "STRENGTHENING",
+      "risk_level": "MEDIUM",
+      "reasons": [
+        "局部可见增强"
+      ],
+      "sources": [
+        "tushare 行情快照 snapshot=sample_1",
+        "时间口径：系统采集观察时间；上游仅提供交易日"
+      ],
+      "declared_sector_ids": []
+    }
+  ],
+  "research_context": {
+    "observation_id": "1312713dac4ff933066f3800d62fbf33ebd525ff5df8a65d1baf9379119b566b",
+    "evidence_key": "b393de0d6bd0b3f3782e177cecf3bc68fcba4299ac3032f4f4c92e5cb48f2dc2",
+    "snapshot_id": "sample_1",
+    "run_time": "2026-10-27T11:00:00+08:00",
+    "source_data_at": null,
+    "source_observed_at": "2026-10-27T10:58:00+08:00",
+    "source_trade_date": "2026-10-27",
+    "time_policy": "RETAIN_WITH_QUALITY_LABELS"
+  }
+}

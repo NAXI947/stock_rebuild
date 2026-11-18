@@ -1,0 +1,14 @@
+[Unit]
+Description=Stock V4 scoped OCTOP RPC session
+
+[Service]
+Type=exec
+EnvironmentFile=/opt/1panel/apps/local/stock-system/automation/octop-host.env
+ExecStart=/opt/1panel/apps/local/stock-system/deploy/octop-stdio.sh
+StandardInput=socket
+StandardOutput=inherit
+StandardError=journal
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true

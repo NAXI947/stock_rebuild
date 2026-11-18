@@ -1,0 +1,8 @@
+[Unit]
+Description=Stock V4 workspace TCP listener
+
+[Socket]
+ListenStream=0.0.0.0:34234
+
+[Install]
+WantedBy=sockets.target

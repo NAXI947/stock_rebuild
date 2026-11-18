@@ -1,0 +1,127 @@
+name: stock-v4
+
+x-service: &service
+  init: true
+  restart: unless-stopped
+  read_only: true
+  user: "10001:10001"
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-backend: &backend
+  <<: *service
+  image: ${BACKEND_IMAGE:?missing backend image digest}
+  env_file:
+    - path: ${STOCK_DEPLOY_ROOT:?missing deployment root}/.env
+      format: raw
+
+x-backend-environment: &backend-environment
+  APP_ENV: production
+  APP_PAUSE_FILE: /app/release-control/paused
+  APP_WORKSPACE_TOKEN_FILE: /app/data/workspace.token
+  APP_CALENDAR_FILE: /app/data/trading-calendar.json
+  ENABLE_OFFICIAL_COLLECTION: "false"
+  ENABLE_FINDESK_IOPV: "false"
+  ENABLE_QQ_PUSH: "false"
+  ENABLE_HERMES_SCHEDULE: "false"
+  PYTHONDONTWRITEBYTECODE: "1"
+  TZ: Asia/Shanghai
+
+services:
+  stock-backend:
+    <<: *backend
+    container_name: stock-v4-backend
+    command: ["python", "-m", "modules.strategy_hermes.runtime", "api"]
+    environment:
+      <<: *backend-environment
+      APP_API_PORT: "8000"
+      APP_LEFT_RIGHT_EOD_FILE: /app/data/left-right-eod.json
+      APP_MARKET_MACRO_FILE: /app/data/market-background.json
+      APP_TOUCH_FILE: /app/data/three-day-touch.json
+      APP_TMP_ROOT: /app/tmp
+      APP_SERVICE_NAME: api
+      HOME: /app/tmp/api/system
+      TMPDIR: /app/tmp/api/system
+      TMP: /app/tmp/api/system
+      TEMP: /app/tmp/api/system
+      XDG_CACHE_HOME: /app/tmp/api/cache
+    volumes:
+      - ${STOCK_DEPLOY_ROOT}/data:/app/data:ro
+      - ${STOCK_DEPLOY_ROOT}/runtime/release-control:/app/release-control:ro
+      - ${STOCK_DEPLOY_ROOT}/runtime/tmp:/app/tmp
+      - ${STOCK_DEPLOY_ROOT}/runtime/tmp/api/system:/tmp
+      - ${STOCK_DEPLOY_ROOT}/runtime/tmp/api/system:/var/tmp
+    expose: ["8000"]
+    mem_limit: 1024m
+    cpus: "1.0"
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      panel:
+        aliases: [stock-v4-backend]
+
+  stock-worker:
+    <<: *backend
+    container_name: stock-v4-worker
+    command: ["python", "-m", "modules.strategy_hermes.runtime", "worker"]
+    environment:
+      <<: *backend-environment
+      APP_LEFT_RIGHT_EOD_CODES: "${STOCK_LEFT_RIGHT_EOD_CODES:-}"
+      APP_TMP_ROOT: /app/tmp
+      APP_SERVICE_NAME: worker
+      HOME: /app/tmp/worker/system
+      TMPDIR: /app/tmp/worker/system
+      TMP: /app/tmp/worker/system
+      TEMP: /app/tmp/worker/system
+      XDG_CACHE_HOME: /app/tmp/worker/cache
+    volumes:
+      - ${STOCK_DEPLOY_ROOT}/data:/app/data:ro
+      - ${STOCK_DEPLOY_ROOT}/runtime/release-control:/app/release-control:ro
+      - ${STOCK_DEPLOY_ROOT}/runtime/tmp:/app/tmp
+      - ${STOCK_DEPLOY_ROOT}/runtime/tmp/worker/system:/tmp
+      - ${STOCK_DEPLOY_ROOT}/runtime/tmp/worker/system:/var/tmp
+    mem_limit: 3072m
+    cpus: "3.0"
+    stop_grace_period: 150s
+    healthcheck:
+      test: ["CMD", "python", "-m", "modules.strategy_hermes.runtime", "worker-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [panel]
+
+  stock-web:
+    <<: *service
+    image: ${WEB_IMAGE:?missing web image digest}
+    container_name: stock-v4-web
+    depends_on:
+      stock-backend:
+        condition: service_healthy
+    volumes:
+      - ${STOCK_DEPLOY_ROOT}/runtime/tmp/web:/app/tmp/web
+      - ${STOCK_DEPLOY_ROOT}/runtime/tmp/web/system:/tmp
+      - ${STOCK_DEPLOY_ROOT}/runtime/tmp/web/system:/var/tmp
+    expose: ["8080"]
+    ports: ["127.0.0.1:34235:8080"]
+    mem_limit: 256m
+    cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [panel]
+
+networks:
+  panel:
+    external: true
+    name: 1panel-network

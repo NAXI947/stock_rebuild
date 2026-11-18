@@ -1,0 +1,13 @@
+🧪 【Hermes 手动联调验收】
+🕒 {{time}} ｜ 结论：{{conclusion}}
+━━━━━━━━━━━━━━
+📡 采集：{{data_result}}
+🛠️ 维护：{{maintenance_result}}
+🧠 研判：{{research_result}}
+🤖 调度：{{octop_result}}
+🔧 复验：{{fix_result}}
+📨 推送：{{qq_result}}
+━━━━━━━━━━━━━━
+⚠️ 待补：{{pending_items}}
+🗓️ 排期：{{schedule}}
+🆔 {{report_id}}

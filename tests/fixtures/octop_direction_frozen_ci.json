@@ -1,0 +1,225 @@
+{
+  "results": [
+    {
+      "case": "new",
+      "passed": true,
+      "evidence": {
+        "input_kind": "FROZEN",
+        "sector_id": "kaipanla:TEST01"
+      },
+      "report": {
+        "status": "PARTIAL",
+        "sectors": [
+          {
+            "sector_name": "冻结样本板块",
+            "kaipanla_plate_id": "TEST01",
+            "observation_state": "新增",
+            "signal": "STRENGTHENING",
+            "evidence_status": "PARTIAL",
+            "risk_level": "UNKNOWN",
+            "reasons": [
+              "板块涨跌 +3.20%",
+              "ETF 涨跌 +2.70%",
+              "板块权重暴露 91.00%",
+              "成分股报价覆盖 93.00%",
+              "主板权重 71.00%"
+            ],
+            "risks": [
+              "IOPV_MISSING",
+              "NO_COMPARABLE_PRIOR"
+            ],
+            "sources": [
+              "frozen:current:board",
+              "frozen:current:etf"
+            ]
+          }
+        ]
+      },
+      "judgments": []
+    },
+    {
+      "case": "maintain",
+      "passed": true,
+      "evidence": {
+        "input_kind": "FROZEN",
+        "sector_id": "kaipanla:TEST01"
+      },
+      "report": {
+        "status": "PARTIAL",
+        "sectors": [
+          {
+            "sector_name": "冻结样本板块",
+            "kaipanla_plate_id": "TEST01",
+            "observation_state": "维持",
+            "signal": "STABLE",
+            "evidence_status": "PARTIAL",
+            "risk_level": "UNKNOWN",
+            "reasons": [
+              "板块涨跌 +1.80%",
+              "ETF 涨跌 +1.60%",
+              "板块权重暴露 91.00%",
+              "成分股报价覆盖 93.00%",
+              "主板权重 71.00%"
+            ],
+            "risks": [
+              "IOPV_MISSING"
+            ],
+            "sources": [
+              "frozen:current:board",
+              "frozen:current:etf"
+            ]
+          }
+        ]
+      },
+      "judgments": []
+    },
+    {
+      "case": "strengthen-low-coverage",
+      "passed": true,
+      "evidence": {
+        "input_kind": "FROZEN",
+        "sector_id": "kaipanla:TEST01"
+      },
+      "report": {
+        "status": "PARTIAL",
+        "sectors": [
+          {
+            "sector_name": "冻结样本板块",
+            "kaipanla_plate_id": "TEST01",
+            "observation_state": "加强",
+            "signal": "STRENGTHENING",
+            "evidence_status": "PARTIAL",
+            "risk_level": "UNKNOWN",
+            "reasons": [
+              "板块涨跌 +2.80%",
+              "ETF 涨跌 +2.40%",
+              "板块权重暴露 91.00%",
+              "成分股报价覆盖 60.00%",
+              "主板权重 71.00%"
+            ],
+            "risks": [
+              "IOPV_MISSING",
+              "LOW_COVERAGE"
+            ],
+            "sources": [
+              "frozen:current:board",
+              "frozen:current:etf"
+            ]
+          }
+        ]
+      },
+      "judgments": []
+    },
+    {
+      "case": "weaken-held",
+      "passed": true,
+      "evidence": {
+        "input_kind": "FROZEN",
+        "sector_id": "kaipanla:TEST01"
+      },
+      "report": {
+        "status": "PARTIAL",
+        "sectors": [
+          {
+            "sector_name": "冻结样本板块",
+            "kaipanla_plate_id": "TEST01",
+            "observation_state": "减弱",
+            "signal": "WEAKENING",
+            "evidence_status": "PARTIAL",
+            "risk_level": "UNKNOWN",
+            "reasons": [
+              "板块涨跌 +0.80%",
+              "ETF 涨跌 +0.60%",
+              "板块权重暴露 91.00%",
+              "成分股报价覆盖 93.00%",
+              "主板权重 71.00%"
+            ],
+            "risks": [
+              "IOPV_MISSING"
+            ],
+            "sources": [
+              "frozen:current:board",
+              "frozen:current:etf",
+              "frozen:current:evidence"
+            ]
+          }
+        ]
+      },
+      "judgments": []
+    },
+    {
+      "case": "retreat-held",
+      "passed": true,
+      "evidence": {
+        "input_kind": "FROZEN",
+        "sector_id": "kaipanla:TEST01"
+      },
+      "report": {
+        "status": "PARTIAL",
+        "sectors": [
+          {
+            "sector_name": "冻结样本板块",
+            "kaipanla_plate_id": "TEST01",
+            "observation_state": "撤回",
+            "signal": "WEAKENING",
+            "evidence_status": "PARTIAL",
+            "risk_level": "UNKNOWN",
+            "reasons": [
+              "板块涨跌 -4.70%",
+              "ETF 涨跌 -3.90%",
+              "板块权重暴露 91.00%",
+              "成分股报价覆盖 93.00%",
+              "主板权重 71.00%"
+            ],
+            "risks": [
+              "IOPV_MISSING"
+            ],
+            "sources": [
+              "frozen:current:board",
+              "frozen:current:etf",
+              "frozen:current:evidence"
+            ]
+          }
+        ]
+      },
+      "judgments": [
+        {
+          "phase": "RETREAT",
+          "sector_id": "kaipanla:TEST01",
+          "evidence_ref": "frozen:current:board"
+        }
+      ]
+    },
+    {
+      "case": "not-covered-held",
+      "passed": true,
+      "evidence": {
+        "input_kind": "FROZEN",
+        "sector_id": "kaipanla:TEST01"
+      },
+      "report": {
+        "status": "PARTIAL",
+        "sectors": [
+          {
+            "sector_name": "冻结样本板块",
+            "kaipanla_plate_id": "TEST01",
+            "observation_state": "本轮未覆盖",
+            "signal": "UNCERTAIN",
+            "evidence_status": "PARTIAL",
+            "risk_level": "UNKNOWN",
+            "reasons": [
+              "板块权重暴露 91.00%",
+              "主板权重 71.00%"
+            ],
+            "risks": [
+              "IOPV_MISSING",
+              "NO_CURRENT_SECTOR_EVIDENCE"
+            ],
+            "sources": []
+          }
+        ]
+      },
+      "judgments": []
+    }
+  ]
+}

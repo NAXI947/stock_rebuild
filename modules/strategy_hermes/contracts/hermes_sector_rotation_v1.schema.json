@@ -1,0 +1,658 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://stockapp.invalid/schemas/hermes_sector_rotation_v1",
+  "title": "Existing Hermes sector rotation report v1",
+  "description": "Required fields follow the current consumer hard-failure boundary; optional v1 fields remain nullable for older legal files. Root validates current-reader compatibility. $defs/published validates a newly published document.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "report_id",
+    "trade_date",
+    "generated_at",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "hermes_sector_rotation_v1"
+    },
+    "report_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "trade_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "data_as_of": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "enum": [
+        "READY",
+        "PARTIAL",
+        "UNAVAILABLE"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "sectors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "sector_name": {
+            "type": "string"
+          },
+          "kaipanla_plate_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "signal": {
+            "enum": [
+              "STRENGTHENING",
+              "STABLE",
+              "WEAKENING",
+              "UNCERTAIN"
+            ]
+          },
+          "risk_level": {
+            "enum": [
+              "LOW",
+              "MEDIUM",
+              "HIGH",
+              "UNKNOWN"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "direction_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state_streak": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "streak_bridged_tech_gap": {
+            "type": "boolean"
+          },
+          "core_stock_codes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^\\d{6}\\.(SH|SZ|BJ)$"
+            }
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "research_observations": {
+      "type": "array",
+      "maxItems": 300,
+      "items": {
+        "type": "object",
+        "required": [
+          "sector_name",
+          "identity_status",
+          "observation_state",
+          "evidence_status",
+          "signal",
+          "risk_level"
+        ],
+        "properties": {
+          "sector_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observation_state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "identity_status": {
+            "enum": [
+              "FROZEN_VERIFIED",
+              "UNVERIFIED"
+            ]
+          },
+          "model_declared": {
+            "type": "object"
+          },
+          "fact_validation": {
+            "type": "object"
+          },
+          "state_policy": {
+            "const": "VALIDATED_EFFECTIVE_STATE"
+          }
+        }
+      }
+    },
+    "research_context": {
+      "type": "object",
+      "properties": {
+        "observation_id": {
+          "type": "string"
+        },
+        "evidence_key": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "time_policy": {
+          "const": "RETAIN_WITH_QUALITY_LABELS"
+        }
+      }
+    },
+    "fact_validation": {
+      "type": "object",
+      "required": [
+        "contract_version",
+        "fatal_errors",
+        "direction_results"
+      ],
+      "properties": {
+        "contract_version": {
+          "const": "hermes-facts-v1"
+        },
+        "fatal_errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "direction_results": {
+          "type": "array"
+        }
+      }
+    },
+    "rotation_chain": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "hermes-chain-state-v1"
+        },
+        "round_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        }
+      }
+    },
+    "brief": {
+      "type": "object",
+      "required": [
+        "ai_text",
+        "chain_text",
+        "text",
+        "lint",
+        "mainline_confirmation"
+      ],
+      "properties": {
+        "ai_text": {
+          "type": "string"
+        },
+        "chain_text": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "lint": {
+          "type": "object",
+          "required": [
+            "valid",
+            "warnings",
+            "machine_publication_blocked"
+          ],
+          "properties": {
+            "valid": {
+              "type": "boolean"
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "machine_publication_blocked": {
+              "const": false
+            }
+          }
+        },
+        "mainline_confirmation": {
+          "type": "object",
+          "required": [
+            "status",
+            "direction_id",
+            "text"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "NOT_REQUESTED",
+                "CONFIRMED_BY_AI",
+                "INVALID_OR_UNVERIFIED"
+              ]
+            },
+            "direction_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "text": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "telemetry_ref": {
+      "type": "string"
+    },
+    "time_policy": {
+      "type": "string"
+    },
+    "focus_list_complete": {
+      "type": "boolean"
+    },
+    "direction_technical_gaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "planned_slot_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "round_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "attempt_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "$defs": {
+    "published": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schema_version",
+        "report_id",
+        "trade_date",
+        "generated_at",
+        "data_as_of",
+        "expires_at",
+        "status",
+        "summary",
+        "sectors",
+        "warnings"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "hermes_sector_rotation_v1"
+        },
+        "report_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "trade_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "data_as_of": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "READY",
+            "PARTIAL",
+            "UNAVAILABLE"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "sectors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "sector_name": {
+                "type": "string"
+              },
+              "kaipanla_plate_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "signal": {
+                "enum": [
+                  "STRENGTHENING",
+                  "STABLE",
+                  "WEAKENING",
+                  "UNCERTAIN"
+                ]
+              },
+              "risk_level": {
+                "enum": [
+                  "LOW",
+                  "MEDIUM",
+                  "HIGH",
+                  "UNKNOWN"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "risks": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "sector_name",
+              "kaipanla_plate_id",
+              "signal",
+              "risk_level",
+              "reasons",
+              "risks",
+              "sources"
+            ]
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "research_observations": {
+          "type": "array",
+          "maxItems": 300,
+          "items": {
+            "type": "object",
+            "required": [
+              "sector_name",
+              "identity_status",
+              "observation_state",
+              "evidence_status",
+              "signal",
+              "risk_level"
+            ],
+            "properties": {
+              "sector_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "observation_state": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "identity_status": {
+                "enum": [
+                  "FROZEN_VERIFIED",
+                  "UNVERIFIED"
+                ]
+              },
+              "model_declared": {
+                "type": "object"
+              },
+              "fact_validation": {
+                "type": "object"
+              },
+              "state_policy": {
+                "const": "VALIDATED_EFFECTIVE_STATE"
+              }
+            }
+          }
+        },
+        "research_context": {
+          "type": "object",
+          "properties": {
+            "observation_id": {
+              "type": "string"
+            },
+            "evidence_key": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "time_policy": {
+              "const": "RETAIN_WITH_QUALITY_LABELS"
+            }
+          }
+        },
+        "fact_validation": {
+          "type": "object",
+          "required": [
+            "contract_version",
+            "fatal_errors",
+            "direction_results"
+          ],
+          "properties": {
+            "contract_version": {
+              "const": "hermes-facts-v1"
+            },
+            "fatal_errors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "direction_results": {
+              "type": "array"
+            }
+          }
+        },
+        "rotation_chain": {
+          "type": "object",
+          "properties": {
+            "schema_version": {
+              "const": "hermes-chain-state-v1"
+            },
+            "round_count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 6
+            }
+          }
+        },
+        "brief": {
+          "type": "object",
+          "required": [
+            "ai_text",
+            "chain_text",
+            "text",
+            "lint",
+            "mainline_confirmation"
+          ],
+          "properties": {
+            "ai_text": {
+              "type": "string"
+            },
+            "chain_text": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "lint": {
+              "type": "object",
+              "required": [
+                "valid",
+                "warnings",
+                "machine_publication_blocked"
+              ],
+              "properties": {
+                "valid": {
+                  "type": "boolean"
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "machine_publication_blocked": {
+                  "const": false
+                }
+              }
+            },
+            "mainline_confirmation": {
+              "type": "object",
+              "required": [
+                "status",
+                "direction_id",
+                "text"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "NOT_REQUESTED",
+                    "CONFIRMED_BY_AI",
+                    "INVALID_OR_UNVERIFIED"
+                  ]
+                },
+                "direction_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "text": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "telemetry_ref": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

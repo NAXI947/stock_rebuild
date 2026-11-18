@@ -1,0 +1,55 @@
+services:
+  stock-backend:
+    environment:
+      HERMES_TRIGGER_MODE: "${STOCK_HERMES_TRIGGER_MODE:-internal}"
+      APP_OCTOP_MCP_PORT: "8001"
+      APP_OCTOP_NATIVE_TOKEN_FILE: /app/data/octop-native.token
+      APP_QQ_TEMPLATE_DIR: /app/qq-templates
+      ENABLE_QQ_TASK_NOTICES: "${STOCK_AUTOMATION_QQ:-false}"
+    volumes:
+      - type: bind
+        source: ${STOCK_DEPLOY_ROOT:?missing deployment root}/deploy/qq-templates
+        target: /app/qq-templates
+        read_only: true
+        bind:
+          create_host_path: false
+    expose: ["8000", "8001"]
+    networks:
+      panel:
+        aliases: [stock-v4-backend.internal]
+  stock-worker:
+    environment:
+      HERMES_TRIGGER_MODE: "${STOCK_HERMES_TRIGGER_MODE:-internal}"
+      ENABLE_HERMES_SCHEDULE: "${STOCK_AUTOMATION_HERMES:-false}"
+      ENABLE_OFFICIAL_COLLECTION: "${STOCK_AUTOMATION_COLLECT:-false}"
+      ENABLE_QQ_PUSH: "${STOCK_AUTOMATION_QQ:-false}"
+      ENABLE_FINDESK_IOPV: "${STOCK_AUTOMATION_FINDESK:-false}"
+      ENABLE_STOCK_RESEARCH: "${STOCK_AUTOMATION_STOCK_RESEARCH:-false}"
+      APP_CALENDAR_FILE: /app/data/trading-calendar.json
+      APP_MAPPING_FILE: /app/data/etf-mapping.json
+      APP_SNAPSHOT_KEY: "${STOCK_AUTOMATION_SNAPSHOT_KEY:-stock-v4:prod:source:market}"
+      APP_MARKET_FILE: ""
+      APP_OCTOP_SOCKET: /app/octop-rpc/bridge.sock
+      OCTOP_COMMAND_JSON: ""
+      APP_QQ_TEMPLATE_DIR: /app/qq-templates
+      APP_TICKFLOW_CONFIG: /app/automation/tickflow.json
+      APP_KAIPANLA_CAPTURES: /app/automation/kaipanla
+    volumes:
+      - type: bind
+        source: ${STOCK_DEPLOY_ROOT:?missing deployment root}/deploy/qq-templates
+        target: /app/qq-templates
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STOCK_DEPLOY_ROOT:?missing deployment root}/runtime/octop-rpc
+        target: /app/octop-rpc
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${STOCK_DEPLOY_ROOT:?missing deployment root}/automation/feed
+        target: /app/automation
+        read_only: true
+        bind:
+          create_host_path: false

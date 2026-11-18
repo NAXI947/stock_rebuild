@@ -1,0 +1,25 @@
+📊 {{title}}
+🕒 {{clock}}
+━━━━━━━━━━━━━━
+🌡️ 市场情绪
+{{market}}
+{{leaders}}
+
+🧭 板块动向
+{{boards}}
+
+🎯 ETF 与个股
+🟢 候选：{{etf_candidates}}
+👀 观察：{{etf_watch}}
+⛔ 执行限制：{{etf_blocked}}
+📚 资料待补：{{etf_gaps}}
+📈 个股：{{stocks}}
+
+⚡ 模拟与活跃
+🤖 节点：{{simulation}} ｜ 📐 IOPV：{{iopv}}
+🔥 活跃：{{active_directions}}
+━━━━━━━━━━━━━━
+🔍 研判明细
+{{details}}
+━━━━━━━━━━━━━━
+🆔 {{report_id}}

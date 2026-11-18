@@ -1,0 +1,9 @@
+⚙️ 【{{task_name}}｜{{status}}】
+🕒 {{time}}
+━━━━━━━━━━━━━━
+📌 结果：{{result}}
+🔍 原因：{{reason}}
+➡️ 后续：{{next_action}}
+📨 推送：{{qq_state}}
+━━━━━━━━━━━━━━
+🆔 {{task_id}}

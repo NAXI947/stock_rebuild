@@ -133,6 +133,26 @@ class MaterialContract(unittest.TestCase):
         self.assertEqual(materials.parse_szse_discovery(json.dumps(body),'159001.SZ',NOW),
                          'https://disc.static.szse.cn/download/disc/finalpage/fund.PDF')
 
+    def test_exchange_rules_are_shared_per_listing_exchange(self):
+        sh=dict(materials.exchange_rule_sources('588100.SH'));sz=dict(materials.exchange_rule_sources('159915.SZ'))
+        self.assertEqual(sh,dict(trade_guide=materials.TRADE_GUIDE,price_rule=materials.PRICE_RULE))
+        self.assertEqual(sz,dict(trade_guide=materials.SZSE_TRADE_GUIDE,price_rule=materials.SZSE_PRICE_RULE))
+        for url in sz.values():
+            self.assertEqual(verification.official_url(url),url);self.assertIn('szse.cn/',url)
+        self.assertEqual(materials.exchange_rule_sources('920001.BJ'),())
+
+    def test_szse_rule_wording_satisfies_existing_scalar_citations(self):
+        # Sentences as published in the two configured SZSE sources; the validator is unchanged.
+        page=('<html><p>基金代码159915，指数399006。</p><p>最小交易单位为1手（1手为100份），价格最小变动单位为0.001元</p>'
+              '<p>境内A股ETF则为T+1交易，即T日买入的ETF T+1日方可卖出。</p><p>基金的价格涨跌幅限制比例为10%。</p></html>').encode()
+        segments=materials.extract_segments(page)
+        cite=lambda needle:[dict(document='source',locator=s['locator'],excerpt=s['text'].strip()) for s in segments if needle in s['text']]
+        review=dict(trade_unit=100,price_limit_ratio='0.1',settlement_cycle='T+1',
+            claims=dict(etf_code=cite('159915'),index_code=cite('399006'),trade_unit=cite('100份'),
+                        price_limit_ratio=cite('10%'),settlement_cycle=cite('T+1')))
+        self.assertTrue(all(review['claims'].values()))
+        verification.validate_review_claim_values(review,'159915.SZ','399006.SZ')
+
     def test_target_selection_needs_active_real_association_and_is_bounded(self):
         current=mapping()
         for number in range(12):current['products'][f'{588101+number}.SH']=deepcopy(current['products'][ETF])
@@ -227,6 +247,42 @@ class MaterialFlow(unittest.TestCase):
              patch.object(materials,'_download',side_effect=fetch),patch.object(materials,'datetime',Clock):
             result=materials.prepare_materials(self.store,self.map,None,NOW,request,lambda:None)
         return result,calls
+
+    def prepare_szse(self,found=True):
+        tag=self.ns.rsplit(':',1)[-1];code='159'+format(int(sha256(tag.encode()).hexdigest(),16)%1000,'03d')+'.SZ'
+        current=deepcopy(self.map);current['products'][code]=deepcopy(current['products'][ETF])
+        guide,rule=('https://investor.szse.cn/material-'+tag+'-'+name+'.html' for name in ('guide','rule'))
+        def request(source,scope,operation):return dict(status='SAVED',receipt=operation())
+        def fetch(url,payload=None):
+            if payload is None:return TEXT
+            title=payload['searchKey'][0]
+            rows=[dict(secCode=[code[:6]],title='基金'+title,publishTime='2026-11-16 10:00:00',
+                       attachPath='/download/disc/'+tag+'-'+str(len(title))+'.PDF')] if found else []
+            return json.dumps({'data':rows}).encode()
+        class Clock(datetime):
+            @classmethod
+            def now(cls,tz=None):return NOW
+        with patch.object(materials,'associated_targets',return_value=[(code,['kaipanla:chip'])]), \
+             patch.object(materials,'source_seeds',return_value={}), \
+             patch.object(materials,'SZSE_TRADE_GUIDE',guide),patch.object(materials,'SZSE_PRICE_RULE',rule), \
+             patch.object(materials,'_download',side_effect=fetch),patch.object(materials,'datetime',Clock):
+            result=materials.prepare_materials(self.store,current,None,NOW,request,lambda:None)
+        with self.store._connect() as conn:
+            target_id=conn.execute('SELECT target_id FROM product_verification_targets WHERE ns=%s AND etf_code=%s',
+                                   (self.ns,code)).fetchone()[0]
+        return result,materials.get_target(self.store,target_id),guide,rule
+
+    def test_szse_target_receives_shared_exchange_rules_with_its_own_documents(self):
+        result,target,guide,rule=self.prepare_szse()
+        self.assertEqual(result['counts']['AWAITING_REVIEW'],1)
+        self.assertEqual(set(target['documents']),{'prospectus','listing','trade_guide','price_rule'})
+        self.assertEqual((target['documents']['trade_guide']['url'],target['documents']['price_rule']['url']),(guide,rule))
+        self.assertTrue(all(doc['segments'] for doc in target['documents'].values()))
+
+    def test_szse_shared_rules_alone_do_not_form_a_dossier(self):
+        result,target,_,_=self.prepare_szse(found=False)
+        self.assertEqual((target['state'],target['reason']),('NEEDS_MATERIALS','OFFICIAL_DOCUMENTS_NOT_FOUND'))
+        self.assertFalse(target['documents'])
 
     def test_producer_text_to_ai_review_to_formal_request_then_publish(self):
         result,calls=self.prepare()

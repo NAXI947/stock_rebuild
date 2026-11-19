@@ -26,6 +26,8 @@ MAX_TEXT = 240000
 MAX_CONTEXT_DOCUMENT = 8000
 TRADE_GUIDE = 'https://edu.sse.com.cn/service/hotline/qa/c/4956495.shtml'
 PRICE_RULE = 'https://www.sse.com.cn/lawandrules/sselawsrules2025/fund/trading/c/10817739/files/7ffa42ba08bf4605a9e680bd38d452b4.docx'
+SZSE_TRADE_GUIDE = 'https://investor.szse.cn/warning/activities/fundIntroduction/t20210104_584079.html'
+SZSE_PRICE_RULE = 'https://docs.static.szse.cn/www/lawrules/rule/trade/current/W020260424690713155663.pdf'
 
 
 def decode(value):
@@ -121,6 +123,13 @@ def extract_segments(content):
     return rows
 
 
+def exchange_rule_sources(code):
+    # Exchange-level trading rules are shared by every product listed there.
+    if code.endswith('.SH'):return (('trade_guide',TRADE_GUIDE),('price_rule',PRICE_RULE))
+    if code.endswith('.SZ'):return (('trade_guide',SZSE_TRADE_GUIDE),('price_rule',SZSE_PRICE_RULE))
+    return ()
+
+
 def source_seeds(code):
     # URL seeds are discovery hints only. Their bytes and semantics are reviewed afresh.
     seeds=json.loads(Path(__file__).with_name('official_product_sources.json').read_text(encoding='utf-8'))
@@ -140,7 +149,7 @@ def source_upgrades(ledger,mapping,codes):
     with ledger._connect() as conn:
         for code in sorted(codes):
             product=mapping['products'].get(code)
-            if not code.endswith('.SH') or not product or product_entry_reason(product,datetime.now(CHINA)) is None:continue
+            if not exchange_rule_sources(code) or not product or product_entry_reason(product,datetime.now(CHINA)) is None:continue
             basis=product_basis(product);target_id='pt-'+fingerprint([code,basis])[:40]
             row=conn.execute('''SELECT state,documents,product_basis,request_id FROM product_verification_targets
                 WHERE ns=%s AND target_id=%s''',(ledger.ns,target_id)).fetchone()
@@ -149,7 +158,7 @@ def source_upgrades(ledger,mapping,codes):
                 AND state IN ('PENDING','WAITING_DOCUMENTS','VERIFIED','PUBLISHED') LIMIT 1''',(ledger.ns,code)).fetchone()
             if active:continue
             documents=decode(row[1])
-            for label,url in (('trade_guide',TRADE_GUIDE),('price_rule',PRICE_RULE)):
+            for label,url in exchange_rule_sources(code):
                 previous=documents.get(label)
                 if previous and previous.get('url')!=url:
                     changes.append(dict(etf_code=code,target_id=target_id,label=label,previous_url=previous['url'],url=url))
@@ -423,13 +432,16 @@ def prepare_materials(ledger,mapping,market,now,request,checkpoint,*,target_code
                 except (ProviderFailure,OSError,ValueError) as exc:
                     if not sources: raise
                     discovery_note='DISCOVERY_UNAVAILABLE_USING_OFFICIAL_SOURCE_SEEDS:'+type(exc).__name__
-                sources.setdefault('trade_guide',TRADE_GUIDE); sources.setdefault('price_rule',PRICE_RULE)
+                for label,url in exchange_rule_sources(code):sources.setdefault(label,url)
             elif code.endswith('.SZ'):
                 for label,title in (('prospectus','招募说明书'),('listing','上市交易公告书')):
                     data,_,_=_fetch(ledger,'https://www.szse.cn/api/disc/announcement/annList',request,checkpoint,now,
                                    kind='official_discovery',payload=szse_discovery_body(code,now,title=title))
                     url=parse_szse_discovery(data,code,now,title=title)
                     if url:sources[label]=url
+                # Keep the missing-product-document failure; shared rules alone are not a dossier.
+                if sources:
+                    for label,url in exchange_rule_sources(code):sources.setdefault(label,url)
             if not sources: raise ValueError('OFFICIAL_DOCUMENTS_NOT_FOUND')
             for label,url in list(sources.items())[:4]:
                 if label in documents and documents[label]['url']==url and row[0]!='REVIEW_REQUIRED': continue

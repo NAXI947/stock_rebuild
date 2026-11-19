@@ -15,7 +15,7 @@ TOOLS = frozenset(f"{SERVER}_stock_hermes_{operation}" for operation in ("prepar
 MAINTENANCE_TOOLS = frozenset(
     [f"{SERVER}_stock_etf_maintenance_{op}" for op in ('prepare','status')]
     + [f"{SERVER}_stock_etf_verification_{op}" for op in ('context','submit')])
-MAX_MODEL_CALLS = 8
+MAX_MODEL_CALLS = 20
 MODEL_TIMEOUT_SECONDS = 120
 SLOT_PATTERN = re.compile(r"执行北京时间\s+(09:35|10:35|13:05|14:05|14:30)\s+板块轮动")
 MAINTENANCE_PATTERN = re.compile(r"执行ETF资料维护\s+(market|retry|verify|materials|close|review|preopen)\b")
@@ -149,7 +149,7 @@ def check_verification_progress(state,observed):
 
 
 class StockNativeRoundsMiddleware(AgentMiddleware):
-    """Hard tool boundary plus completion evidence and eight model-call cap."""
+    """Hard tool boundary, verified completion and per-round model-call limits."""
 
     def _filter(self, request):
         slot = expected_slot(request.state)

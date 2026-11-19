@@ -91,6 +91,7 @@ class NativeLocalTests(unittest.TestCase):
         budget, tokens = (768, 2048) if maintenance else (256, 8192)
         if maintenance:
             tools.extend({"name": f"stock_etf_maintenance_{op}"} for op in ("prepare", "status"))
+            tools.extend({"name": f"stock_etf_verification_{op}"} for op in ("context", "submit"))
             services.repos.agent_repo.list_by_user.return_value = [SimpleNamespace(description=SCHEMA, agent_id="research-untouched")]
         body = dict(name="native", default_model="provider/model", system_prompt="frozen rules", description=marker,
                     config=dict(stock_native_rounds=True, workspace_dir=WORKSPACE,

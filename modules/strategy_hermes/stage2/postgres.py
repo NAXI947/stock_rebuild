@@ -266,7 +266,8 @@ class PostgresLedger(Ledger):
                 (error_code,self.ns,claim.day,claim.slot,claim.token),
             )
 
-    def publish(self, claim, report, days, instruments, input_meta, *, targets=("redis",), rule=None):
+    def publish(self, claim, report, days, instruments, input_meta, *, targets=("redis",), rule=None,
+                etf_projection=None):
         if report.get("kind") != "report" or set(targets) - {"redis","octop"}:
             raise ValueError("invalid report or destination")
         with self._connect() as conn, conn.transaction():
@@ -297,10 +298,38 @@ class PostgresLedger(Ledger):
             if input_meta.get('manual_recovery'):
                 from .native_recovery import validate_publication
                 validate_publication(self, conn, claim, input_meta['manual_recovery'])
+            if etf_projection is not None and etf_projection["policy"]["policy_mode"] == "V3_ENFORCE":
+                db.etf_anchor = {decoded["id"]: etf_projection["pairs"]}
             committed,_=self._store(db,[report],execution_days,units,rule or Rules())
             if len(committed)!=1:
                 raise ValueError("report ID already belongs to a committed round")
             published=committed[0]
+            if etf_projection is not None:
+                from .etf_support_facts import finalize_support_facts
+                if etf_projection["policy"]["policy_mode"] == "V3_SHADOW":
+                    from copy import deepcopy
+                    try:
+                        with conn.transaction(savepoint_name="v3_shadow_sp"):
+                            projected = finalize_support_facts(conn, self.ns, deepcopy(etf_projection),
+                                deepcopy(published), deepcopy(etf_projection["recommendations"]))
+                            shadow = {(row["sector_id"], row["etf"])
+                                      for row in etf_projection["recommendations"]["candidates"]}
+                            actual = {(row["sector_id"], code) for code, rows in published["candidates"].items()
+                                      for row in rows}
+                            projected["candidate_differences"] = dict(
+                                removed=[list(pair) for pair in sorted(actual-shadow)],
+                                added=[list(pair) for pair in sorted(shadow-actual)])
+                            encode(projected)
+                    except (psycopg.OperationalError, psycopg.InterfaceError, LeaseLost):
+                        raise
+                    except Exception as exc:
+                        input_meta = {**input_meta, "representation_shadow_error":
+                                      dict(stage="FINALIZE", error=type(exc).__name__)}
+                    else:
+                        input_meta = {**input_meta, "representation_shadow": projected}
+                else:
+                    input_meta = {**input_meta, "representation": finalize_support_facts(
+                        conn, self.ns, etf_projection, published, input_meta["etf_recommendations"])}
             published["input_meta"]=input_meta
             published["planned_at"]=task[0].isoformat()
             published["round_slot"]=claim.slot

@@ -39,6 +39,7 @@ ERRORS = {
     'APITimeoutError': '模型接口超时', 'SourceFailure': '资料来源返回异常',
     'NON_TRADING_DAY': '非交易日', 'EXISTING_ROUND': '本轮已有任务记录',
     'NATIVE_ROUND_DEADLINE': '本轮处理时限已到',
+    'NATIVE_ANALYSIS_TOO_LARGE': '本轮完整研判证据超过传输上限',
     'STOCK_NATIVE_PREPARE_FAILED': '研判准备阶段异常',
     'STOCK_NATIVE_ANALYZE_FAILED': '研判会话阶段异常',
     'STOCK_NATIVE_PUBLISH_FAILED': '报告发布阶段异常',

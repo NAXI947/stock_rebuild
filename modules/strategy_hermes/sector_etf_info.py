@@ -125,8 +125,13 @@ def _relations(report):
                 if not isinstance(code, str) or not CODE.fullmatch(code):
                     continue
                 pair = (sid, code)
-                if _rejected(product):
+                representation = product.get("representativeness")
+                if isinstance(representation, dict) and representation.get("entry_allowed") is False:
                     rejected.add(pair)
+                elif _rejected(product):
+                    rejected.add(pair)
+                elif isinstance(representation, dict) and representation.get("entry_allowed") is True:
+                    links.add(pair)
                 elif product.get("matched") is True or isinstance(product.get("matched"), list) and product["matched"]:
                     links.add(pair)
     candidates = report.get("candidates", {})

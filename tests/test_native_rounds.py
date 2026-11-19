@@ -11,7 +11,9 @@ from unittest.mock import patch
 
 from modules.strategy_hermes.ledger import encode
 from modules.strategy_hermes.simulator import moment
-from modules.strategy_hermes.stage2.native_rounds import NativeRounds, native_tick, _validate_decisions
+from modules.strategy_hermes.stage2.native_rounds import (
+    NativeRounds, _bounded_native_analysis, _native_model_sector, _validate_decisions, native_tick,
+)
 import test_stage2_postgres as fixtures
 from test_stage1 import A, D1, D2, DAYS, ETF, stamp
 
@@ -24,6 +26,42 @@ class SubmissionValidation(unittest.TestCase):
             with self.subTest(decisions=decisions), self.assertRaises(ValueError):
                 _validate_decisions(decisions,dict(evidence={A:{}}))
         _validate_decisions([row],dict(evidence={A:{}}))
+
+    def test_v3_model_view_keeps_choices_and_fact_references_without_repeated_audit_metadata(self):
+        pair = dict(known_exposure='0.16', max_possible_exposure='0.16', upper_bound_status='PROVEN',
+                    exposure_tier='CORE_REPRESENTATIVE', representativeness_status='RELEVANCE_NOT_REJECTED',
+                    reason_codes=[], fact_refs=['batch-' * 80])
+        option = dict(etf=ETF, representativeness=pair, association_evidence=['batch-' * 80],
+                      reference_stats={stat: dict(status='MISSING', as_of_date=D1, source_batches=['batch-' * 80])
+                                       for stat in ('aum_yuan','adv20','adv5')})
+        option['reference_stats']['aum_yuan'].update(status='AVAILABLE', value='15939828391.0000', unit='CNY')
+        observation = {**option, 'etf':'159901.SZ'}
+        evidence = dict(sector_id=A, current=[dict(ref='current')], previous=[],
+                        fact_catalog={'sector_return':dict(scope='SECTOR',text='unchanged',source_refs=['batch-' * 80])},
+                        etf_options=dict(products=[option], observation_products=[observation]))
+        before = encode(evidence)
+        model = _native_model_sector(evidence)
+        self.assertEqual(encode(evidence), before)
+        self.assertEqual(model['current'], evidence['current'])
+        self.assertEqual(model['fact_catalog'], {'sector_return':{'scope':'SECTOR','text':'unchanged'}})
+        self.assertEqual(model['etf_options']['products'][0]['etf'], ETF)
+        self.assertEqual(model['etf_options']['observation_products'][0]['etf'], '159901.SZ')
+        self.assertEqual(model['etf_options']['products'][0]['representativeness']['known_exposure'], '0.16')
+        self.assertEqual(model['etf_options']['products'][0]['reference_stats']['aum_yuan']['value'],
+                         '1.59398283910000E+10')
+        self.assertLess(len(encode(model)), len(before) // 2)
+
+        analysis = {'sectors':[evidence]}
+        size = len(encode({'sectors':[_native_model_sector(evidence, brief=True)]}).encode('utf-8'))
+        with patch('modules.strategy_hermes.stage2.native_rounds.MAX_NATIVE_ANALYSIS_BYTES', size):
+            brief, = _bounded_native_analysis(analysis)['sectors']
+        self.assertEqual(brief['fact_catalog'], model['fact_catalog'])
+        self.assertEqual(brief['etf_options']['products'], model['etf_options']['products'])
+        self.assertEqual(brief['etf_options']['observation_products'][0]['etf'], '159901.SZ')
+        self.assertNotIn('reference_stats', brief['etf_options']['observation_products'][0])
+        with patch('modules.strategy_hermes.stage2.native_rounds.MAX_NATIVE_ANALYSIS_BYTES', size-1):
+            with self.assertRaisesRegex(ValueError, 'exceeds transport budget'):
+                _bounded_native_analysis(analysis)
 
 
 @unittest.skipUnless(os.environ.get('STAGE2_TEST_ENV_FILE'), 'requires isolated PostgreSQL/Redis')

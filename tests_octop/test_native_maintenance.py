@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 import unittest
 
-from deploy.octop_native_guard import MAINTENANCE_TOOLS, TOOLS, StockNativeRoundsMiddleware
+from deploy.octop_native_guard import MAINTENANCE_TOOLS, MAX_MODEL_CALLS, TOOLS, StockNativeRoundsMiddleware
 
 
 def message(kind, content="", name=""):
@@ -37,7 +37,7 @@ class NativeMaintenanceGuardTests(unittest.TestCase):
             with self.subTest(mode=mode):
                 result = self.guard.wrap_model_call(self.request([instruction(mode)]), lambda r: r)
                 self.assertEqual({tool.name for tool in result.tools}, MAINTENANCE_TOOLS)
-                self.assertEqual(len(result.tools), 2)
+                self.assertEqual(len(result.tools), 4)
 
     def test_direct_research_and_generic_tools_cannot_run_in_maintenance(self):
         for name in (*TOOLS, "execute", "read_file", "cronjob_create", "other_stock_etf_maintenance_status"):
@@ -67,10 +67,11 @@ class NativeMaintenanceGuardTests(unittest.TestCase):
     def test_latest_prompt_switches_back_to_research_budget_and_tools(self):
         history = [instruction()] + [message("ai")] * 24
         history.append(message("human", "执行北京时间 13:05 板块轮动与ETF穿透本轮任务。"))
-        result = self.guard.wrap_model_call(self.request(history + [message("ai")] * 7), lambda r: r)
+        result = self.guard.wrap_model_call(self.request(history + [message("ai")] * (MAX_MODEL_CALLS-1)), lambda r: r)
         self.assertEqual({tool.name for tool in result.tools}, TOOLS)
         with self.assertRaisesRegex(RuntimeError, "MODEL_CALL_BUDGET"):
-            self.guard.wrap_model_call(self.request(history + [message("ai")] * 8), lambda _: self.fail("9th research call"))
+            self.guard.wrap_model_call(self.request(history + [message("ai")] * MAX_MODEL_CALLS),
+                                       lambda _: self.fail("research budget bypassed"))
 
     def test_saved_success_and_partial_receipts_finish_all_modes(self):
         for mode in ("market", "retry", "close", "review", "preopen"):

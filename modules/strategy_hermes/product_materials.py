@@ -9,6 +9,7 @@ from hashlib import sha256
 from html.parser import HTMLParser
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import re
 from urllib.parse import urlencode, urljoin
@@ -17,7 +18,7 @@ from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
 from .ledger import encode, fingerprint
-from .simulator import CHINA, moment
+from .simulator import CHINA, CODE, moment
 
 MAX_TARGETS = 8
 MAX_PAGES = 80
@@ -35,6 +36,26 @@ def product_basis(product):
     """Exclude unrelated statistics/availability, retain every approval identity/rule."""
     return {key: product.get(key) for key in ('name','index_code','list_status','list_date',
             'source_classification','trade_unit','rule')}
+
+
+def material_seed_config(mapping):
+    configured = mapping.get("etf_material_seeds")
+    try:
+        if configured is None:
+            if os.environ.get("ETF_REPRESENTATIVENESS_MODE", "V2") not in ("V3_SHADOW", "V3_ENFORCE"):
+                return None, set()
+            configured = json.loads(Path(__file__).with_name("etf_material_seeds.json").read_text(encoding="utf-8"))
+        version, source, rows = (configured[key] for key in ("seed_config_version", "source_ref", "targets"))
+        if (not isinstance(version, str) or not version or not isinstance(source, str) or not source
+                or not isinstance(rows, list) or len(rows) > 43):
+            return None, set()
+        values = {row["etf"]: row for row in rows}
+        if len(values) != len(rows) or any(not CODE.fullmatch(code) or type(row["materials_enabled"]) is not bool
+                or not isinstance(row["reason"], str) or not row["reason"] for code, row in values.items()):
+            return None, set()
+        return version, {code for code, row in values.items() if row["materials_enabled"]}
+    except (OSError, TypeError, KeyError, ValueError):
+        return None, set()
 
 
 class _Text(HTMLParser):
@@ -82,7 +103,9 @@ def extract_segments(content):
                     stream=page.get_contents()
                     if stream is not None and len(stream.get_data())>4*1024*1024:
                         raise ValueError('DOCUMENT_PAGE_TOO_LARGE')
-                    value=(page.extract_text() or '')[:20000]
+                    # Keep the original bytes for digest verification. The text
+                    # projection must be safe to store in PostgreSQL JSONB.
+                    value=(page.extract_text() or '').replace('\x00', ' ')[:20000]
                     value=value[:MAX_TEXT-used]; used+=len(value)
                     if value.strip(): rows.append(dict(locator='page:'+str(index+1),text=value))
                     if used>=MAX_TEXT: break
@@ -91,7 +114,7 @@ def extract_segments(content):
             raise ValueError('OFFICIAL_PDF_UNREADABLE') from exc
     else:
         parser=_Text(); parser.feed(content.decode('utf-8',errors='replace'))
-        text=''.join(parser.parts)[:MAX_TEXT]
+        text=''.join(parser.parts).replace('\x00', ' ')[:MAX_TEXT]
         rows=[dict(locator='paragraph:'+str(i+1),text=line[:20000])
               for i,line in enumerate(text.splitlines()) if line.strip()]
     if not rows: raise ValueError('OFFICIAL_TEXT_UNAVAILABLE')
@@ -312,6 +335,7 @@ def associated_targets(ledger,mapping,now,target_codes=None):
             or len(set(target_codes))!=len(target_codes)):
         raise ValueError('INVALID_MATERIAL_TARGET_CODES')
     held,sectors=_priorities(ledger)
+    _, seeds = material_seed_config(mapping)
     targets={}
     # Reuse the exact association calculation before research's display cap and
     # same-index representative choice. Those presentation limits must not starve
@@ -327,6 +351,9 @@ def associated_targets(ledger,mapping,now,target_codes=None):
             # legitimately produce more than the ledger's 18 input digits.
             if item.get('association_status')!='VERIFIED' and not any(Decimal(r['weight'])>0 for r in item.get('matched',[])): continue
             targets.setdefault(code,[]).append(sid)
+    for code in seeds.intersection(source['products']):
+        if source['products'][code].get('list_status', 'L') == 'L':
+            targets.setdefault(code, [])
     if target_codes is not None:
         missing=set(target_codes)-set(targets)
         if missing:raise ValueError('TARGET_WITHOUT_ACTIVE_ASSOCIATION:'+','.join(sorted(missing)))
@@ -340,7 +367,8 @@ def associated_targets(ledger,mapping,now,target_codes=None):
         prior=history.get(code)
         if prior and prior['basis']!=product_basis(mapping['products'][code]):prior=None
         if prior and prior['state']=='AWAITING_REVIEW':continue
-        ranked.append((prior is not None,code not in held,prior['at'] if prior else now,code))
+        priority = 0 if code in held else 1 if targets[code] else 2
+        ranked.append((priority,prior is not None,prior['at'] if prior else now,code))
     return [(row[3],targets[row[3]]) for row in sorted(ranked)[:MAX_TARGETS]]
 
 

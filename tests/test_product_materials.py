@@ -29,6 +29,15 @@ def approval(context):
 
 
 class MaterialContract(unittest.TestCase):
+    def test_document_text_with_null_characters_keeps_citable_segments(self):
+        page = SimpleNamespace(get_contents=lambda: None, extract_text=lambda: '基金\x00代码588100')
+        reader = SimpleNamespace(is_encrypted=False, pages=[page], close=lambda: None)
+        with patch('pypdf.PdfReader', return_value=reader):
+            self.assertEqual(materials.extract_segments(b'%PDF'),
+                             [dict(locator='page:1', text='基金 代码588100')])
+        self.assertEqual(materials.extract_segments(b'<p>ETF\x00 code</p>'),
+                         [dict(locator='paragraph:1', text='ETF  code')])
+
     def test_docx_rules_keep_general_limit_exception_conditions_and_effective_date(self):
         from io import BytesIO
         from zipfile import ZipFile

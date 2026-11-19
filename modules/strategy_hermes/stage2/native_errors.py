@@ -10,6 +10,7 @@ KNOWN_ERRORS = {
     'round publishing lease expired': 'ROUND_PUBLISH_LEASE_EXPIRED',
     'hermes request budget exhausted': 'HERMES_REQUEST_BUDGET_EXHAUSTED',
     'mx request budget exhausted': 'MX_REQUEST_BUDGET_EXHAUSTED',
+    'native analysis exceeds transport budget': 'NATIVE_ANALYSIS_TOO_LARGE',
 }
 
 

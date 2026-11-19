@@ -53,6 +53,10 @@ read_automation() {
         key=${line%%=*}
         value=${line#*=}
         case "$key" in
+            ETF_REPRESENTATIVENESS_MODE)
+                [[ "$value" == V2 || "$value" == V3_SHADOW || "$value" == V3_ENFORCE ]] ||
+                    fail 'ETF representativeness mode requires V2, V3_SHADOW or V3_ENFORCE'
+                ;;
             STOCK_HERMES_TRIGGER_MODE)
                 [[ "$value" == internal || "$value" == octop ]] || fail 'Hermes trigger requires internal or octop'
                 ;;
@@ -102,6 +106,7 @@ compose() {
         files+=(-f "$overlay")
     fi
     BACKEND_IMAGE=$backend_image WEB_IMAGE=$web_image \
+        ETF_REPRESENTATIVENESS_MODE=${automation[ETF_REPRESENTATIVENESS_MODE]:-V2} \
         STOCK_HERMES_TRIGGER_MODE=${automation[STOCK_HERMES_TRIGGER_MODE]:-internal} \
         STOCK_AUTOMATION_HERMES=${automation[STOCK_AUTOMATION_HERMES]:-false} \
         STOCK_AUTOMATION_COLLECT=${automation[STOCK_AUTOMATION_COLLECT]:-false} \

@@ -26,7 +26,7 @@ FIELDS = {
     "index_weight": ("index_code", "con_code", "trade_date", "weight"),
     "etf_share_size": ("trade_date", "ts_code", "total_share", "total_size", "nav"),
 }
-INDEX_CODE = re.compile(r"[A-Z0-9]{1,32}\.(SH|SZ|CSI)\Z")
+INDEX_CODE = re.compile(r"[A-Z0-9]{1,32}\.(SH|SZ|CSI|CNI)\Z")
 CONSTITUENT = re.compile(r"(?:[0-9]{6}\.(?:SH|SZ|BJ)|[0-9]{5}\.HK)\Z")
 
 

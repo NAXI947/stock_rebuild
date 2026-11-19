@@ -25,7 +25,9 @@ class ReferencePolicy:
         if pending:
             # One attempt per slot; exhausted targets remain visible for review.
             return (pending.get('attempts', 0) < MAX_ATTEMPTS
-                    and pending.get('last_slot') != self.slot)
+                    and pending.get('last_slot') != self.slot
+                    and not (pending.get('error_kind') == 'CONFIRMED_SOURCE_MISSING'
+                             and pending.get('last_failed_trade_date') == self.now.date().isoformat()))
         if self.mode == 'retry':
             return False
         checked = self.checks.get(key) or {}
@@ -52,8 +54,14 @@ class ReferencePolicy:
             return False
         self.pending[key] = dict(target=old.get('target', target),
             attempts=old.get('attempts', 0) + 1, last_slot=self.slot,
-            attempted_at=self.now.isoformat(), error_kind='ATTEMPT_INTERRUPTED')
+            attempted_at=self.now.isoformat(), error_kind='ATTEMPT_INTERRUPTED',
+            last_attempt_trade_date=self.now.date().isoformat(),
+            last_failed_trade_date=old.get('last_failed_trade_date'))
         return True
+
+    def defer(self, key, target):
+        if key not in self.pending and len(self.pending) < MAX_PENDING:
+            self.pending[key] = dict(target=target, attempts=0, last_slot=self.slot, error_kind='DEFERRED')
 
     def succeeded(self, key, target):
         self.checks[key] = dict(checked_at=self.now.isoformat(), target=target)
@@ -61,7 +69,7 @@ class ReferencePolicy:
 
     def failed(self, key, diagnostic):
         if key in self.pending:
-            self.pending[key].update(diagnostic)
+            self.pending[key].update(diagnostic, last_failed_trade_date=self.now.date().isoformat())
 
     def report(self):
         return dict(pending_count=len(self.pending),

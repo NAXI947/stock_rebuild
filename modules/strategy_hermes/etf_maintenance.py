@@ -76,13 +76,14 @@ class MaintenanceQueue:
         Target state changes made by this job never create a fresh budget.
         A later observed document mismatch permits a distinct, auditable scope.
         """
-        from .product_materials import associated_targets
+        from .product_materials import associated_targets, material_seed_config
         from .stage2.mapping_maintenance import _priorities
         with self.ledger._connect() as lock:
             lock.execute('SELECT pg_advisory_lock(hashtextextended(%s,0))',(self.ledger.ns+':materials-trigger',))
             mapping=live_mapping(self.ledger,Path(os.environ.get('APP_MAPPING_FILE','/app/data/etf-mapping.json')),now)
             targets=associated_targets(self.ledger,mapping,now,target_codes=target_codes)
             codes=[row[0] for row in targets]
+            seed_version, seeds = material_seed_config(mapping)
             # Automatic selection rotates only in a new logical maintenance
             # scope, never merely because this batch reached AWAITING_REVIEW.
             held,sectors=_priorities(self.ledger)
@@ -113,6 +114,9 @@ class MaintenanceQueue:
                 expected_mapping_version=mapping['version'],material_targets=codes,material_scope=scope,
                 material_invalidations=[row[0] for row in invalidations],
                 business_date=now.date().isoformat(),scheduled_date=now.date().isoformat(),version='etf-static-materials-v1')
+            seed_targets = [code for code, sectors in targets if not sectors and code in seeds]
+            if seed_targets:
+                body.update(seed_config_version=seed_version, material_seed_targets=seed_targets)
             try:job=self.queue.enqueue(body,MAX_REQUESTS)
             except QueueFull:
                 return dict(state='SKIPPED',mode='materials',reason='MAINTENANCE_QUEUE_FULL',hermes='CONTINUES')

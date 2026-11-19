@@ -30,7 +30,7 @@ class NativeGuardTests(unittest.TestCase):
         result = self.guard.wrap_model_call(self.request(), lambda r: r)
         self.assertEqual({t.name for t in result.tools}, TOOLS)
         self.assertEqual(len(result.tools), 3)
-        self.assertEqual(MAX_MODEL_CALLS, 8)
+        self.assertEqual(MAX_MODEL_CALLS, 20)
 
     def test_direct_forbidden_calls_never_reach_handler(self):
         for name in ("task", "execute", "read_file", "cronjob_create", "other_stock_hermes_submit", *MAINTENANCE_TOOLS):

@@ -172,7 +172,12 @@ class Ledger:
                 eligible=[(r,c) for r,c in pairs if not any(other["sectors"].get(c["sector_id"],{}).get("state") in ("WEAK","EXIT") for other in reports)]
                 if not eligible:
                     continue
-                report, choice=min(eligible,key=lambda p:(p[1]["rank"],p[0]["id"],p[1]["sector_id"],p[1]["mapping_ref"]))
+                anchor = getattr(db, "etf_anchor", {})
+                report_ids = {r["id"] for r, _ in eligible}
+                facts = anchor.get(next(iter(report_ids)), {}) if len(report_ids) == 1 and len(eligible) > 1 else {}
+                report, choice=min(eligible,key=lambda p:(
+                    facts.get(p[1]["sector_id"], {}).get(code, {}).get("exposure_tier") != "CORE_REPRESENTATIVE",
+                    p[1]["rank"],p[0]["id"],p[1]["sector_id"],p[1]["mapping_ref"]))
                 cid=fingerprint([ns,code,report["id"]])
                 sources=[dict(c,report_id=r["id"]) for r,c in eligible]
                 active[code]=(cid,create_cycle(code,units[code],rules,report,choice,sources),report["at"])

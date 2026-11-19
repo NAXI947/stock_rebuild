@@ -6,7 +6,7 @@ from ..adapter import READ_ONLY_OBSERVATION, normalize, unique_object
 from ..ledger import encode
 from ..simulator import moment, session
 from .stock_research import MAX_PER_SECTOR, MAX_CORE_LEADERS
-from .research_facts import explanation, judgment_review, selection
+from .research_facts import explanation, judgment_review, selection_detail
 
 DECISION_PROTOCOL = "stock-v4-octop-direction-v1"
 RESEARCH_ROLES = frozenset(("MAINLINE", "ROTATION", "WATCH", "EVENT_FIRST"))
@@ -94,7 +94,7 @@ def render(receipt, evidence):
     if decision["sector_id"] != evidence["sector_id"] or decision["phase"] not in PHASES:
         raise ValueError("invalid OCTOP sector or phase")
     review = judgment_review(decision, evidence)
-    etf_choices, selection_review = selection(decision, evidence)
+    etf_choices, selection_review, selection_audit = selection_detail(decision, evidence)
     if review:
         decision = {**decision, "phase": "UNKNOWN" if evidence["current"] else "NOT_COVERED",
                     "evidence_refs": [row["ref"] for row in evidence["current"]],
@@ -206,5 +206,6 @@ def render(receipt, evidence):
     return {"report": report, "judgments": judgments, "normalized": normalized["sectors"],
             "research": explanation(decision, evidence, checked, review),
             "judgment_review": review, "etf_choices": etf_choices, "etf_selection_review": selection_review,
+            **({"etf_selection_audit": selection_audit} if selection_audit else {}),
             "core_leaders": dict(status=core_status, codes=leaders,
                                  evidence=[permitted[code] for code in leaders])}

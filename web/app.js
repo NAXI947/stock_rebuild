@@ -283,7 +283,7 @@ function reportDetail(panel,row,refreshReport) {
     return [s.sector_name,decision?.label || phaseLabels[decision?.phase] || statusName(s.observation_state),(s.reasons||[]).join(" · ")];
   }),"本轮没有板块判断"));
   const hybrid=row.input_meta?.etf_recommendations;
-  const directionFirst=hybrid?.method==="etf-direction-first-v2";
+  const directionFirst=["etf-direction-first-v2","etf-direction-first-v3"].includes(hybrid?.method);
   const explain=(hybrid || row.input_meta?.penetration)?.sectors || {};
   const missingWeights=Math.max(0,...Object.values(explain).map(s=>s.coverage_gaps?.weights?.products || 0));
   if (missingWeights) panel.append(elt("p","资料待补：目录"+missingWeights+"只ETF缺可用成分权重，穿透待核验。","muted"));
@@ -297,6 +297,10 @@ function reportDetail(panel,row,refreshReport) {
     RULE_UNVERIFIED:"交易规则待核验", TRADE_UNIT_CHANGED:"交易单位与冻结规则冲突",
     RULE_REVIEW_REQUIRED:"产品规则待复核，暂停新入场", SETTLEMENT_RULE_CONFLICT:"结算规则冲突待核验",
     ENTRY_ADMISSION_UNAVAILABLE:"准入资料读取失败，暂停新买", ENTRY_REFERENCE_UNPUBLISHED:"正式准入资料未发布",
+    NO_OVERLAP_CONFIRMED:"正式板块无正权重交集", WEAK_OVERLAP_REJECTED:"弱关联观察",
+    SINGLE_STOCK_CROSSOVER_REJECTED:"单股跨界观察", WEAK_OVERLAP_UPPER_BOUND_REJECTED:"暴露上界低于底线",
+    REPRESENTATIVENESS_UNKNOWN:"代表性待核验", ASSOCIATION_UNCONFIRMED:"关联待核验",
+    EMPTY_AFTER_WEAK_PAIR_STRIP:"弱关联剔除后本轮未选",
   };
   const rows=Object.entries(explain).flatMap(([sector,s])=>{
     const name=names[sector] || sector;
@@ -309,24 +313,35 @@ function reportDetail(panel,row,refreshReport) {
       const state=rejected.length ? rejected.join(" · ") : selected ? "本轮候选"
         : s.representatives?.includes(p.etf) ? "穿透观察" : "已通过筛选";
       if (hybrid) {
-        const exposure=s.scope_mode==="event_members" ? p.metrics?.E : p.metrics?.E_sector;
+        const pair=p.representativeness;
+        const exposure=pair ? pair.known_exposure : s.scope_mode==="event_members" ? p.metrics?.E : p.metrics?.E_sector;
         const representative=s.representatives?.includes(p.etf);
         const placement=representative ? " · 代表 ETF" : s.static_representatives?.includes(p.etf)
           ? " · 静态代表" : p.recommendation_status==="CONFIRMED" ? " · 备选" : "";
-        const scope=p.exposure_basis==="KNOWN_LOWER_BOUND"
+        const scope=pair
+          ? " · "+({COMPLETE:"完整",KNOWN_LOWER_BOUND:"已知下界",UNAVAILABLE:"待数据"}[pair.exposure_basis]||"待数据")
+            +" · 匹配 "+(pair.matched_count??"待查")+"，正权重 "+(pair.positive_weight_matched_count??"待查")
+            +" · 上界 "+(pair.upper_bound_status==="PROVEN" ? pct(pair.max_possible_exposure,100) : "待证实")
+          : p.exposure_basis==="KNOWN_LOWER_BOUND"
           ? " · 已知下界（成员 "+p.coverage.known_members+"/"+(p.coverage.reported_members??"未知")+"，已知权重 "+pct(p.coverage.known_weight,100)+"）" : "";
         const limits=directionFirst && p.ai_selected && ["PENDING","REJECTED"].includes(p.recommendation_status)
           ? (p.execution_reasons||[]).map(reason=>rejectionLabels[reason] || reason).join(" · ") : "";
         return [name,p.etf,pct(exposure,100)+scope,pct(p.metrics?.Q,100),
           checkStatus(directionFirst ? p.association_status : p.static_status),checkStatus(p.momentum_status),
           checkStatus(directionFirst ? p.execution_eligibility : p.execution_status),
-          recommendationStatus(p.recommendation_status,directionFirst)+placement+(limits ? " · "+limits : "")];
+          (rejectionLabels[pair?.representativeness_status]||recommendationStatus(p.recommendation_status,directionFirst))
+            +placement+(limits ? " · "+limits : "")];
       }
       return [name,p.etf,pct(p.metrics?.E_sector,100),pct(p.metrics?.Q,100),p.iopv?.iopv,time(p.iopv?.observed_at),state];
     });
   });
   panel.append(table(hybrid ? ["板块","ETF","板块暴露","报价覆盖",directionFirst ? "关联证据" : "静态匹配",directionFirst ? "动向参考" : "动向确认","交易条件","推荐评价"]
     : ["板块","ETF","权重暴露","报价覆盖","IOPV","IOPV 观测时间","筛选状态"],rows,"暂无 ETF 穿透结果"));
+  const support=row.input_meta?.representation?.current_support || [];
+  if (support.length) panel.append(table(["ETF","来源板块","有效加强分支","入选分支","并集暴露","方向冲突"],
+    support.map(group=>[group.etf,group.source_sector_ids.map(sid=>names[sid]||sid).join("、"),
+      group.up_branch_count,group.selected_up_branch_count,pct(group.union_exposure,100),
+      Object.keys(group.direction_conflicts).join("、") || "—"]),"暂无同源支持"));
   if (hybrid) {
     panel.append(elt("p",directionFirst ? "AI依据板块方向和关联证据选择ETF。策略指标用于参考，交易条件决定是否生成模拟入场候选。" : "推荐评价依据当轮已保存的证据；模拟节点单独按信号周期记录。","muted"));
     const labels={product:"产品规则",weights:"指数权重",mainboard:"主板占比",exposure:"目标暴露",

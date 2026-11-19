@@ -366,8 +366,19 @@ def apply_queued(ledger, original, updated, summary, now, request, checkpoint, *
         rows = lock.execute('''SELECT request_id,dossier FROM product_verification_requests
             WHERE ns=%s AND state=ANY(%s::text[]) AND created_at<=%s
             AND (%s::text[] IS NULL OR request_id=ANY(%s::text[]) OR dossier->>'supersedes'=ANY(%s::text[]))
+            AND (%s::text[] IS NOT NULL OR (
+                (dossier->>'effective_at')::timestamptz <= %s AND NOT EXISTS (
+                    SELECT 1 FROM jsonb_each(dossier->'documents') document
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM product_verification_documents stored
+                        WHERE stored.ns=product_verification_requests.ns
+                          AND stored.sha256=document.value->>'sha256'
+                    )
+                )
+            ))
             ORDER BY created_at,request_id LIMIT %s''',
-            (ledger.ns, [*ACTIVE,'NEEDS_REBASE'], now,request_ids,request_ids,request_ids,MAX_REQUESTS)).fetchall()
+            (ledger.ns, [*ACTIVE,'NEEDS_REBASE'], now,request_ids,request_ids,request_ids,
+             request_ids,now,MAX_REQUESTS)).fetchall()
         for request_id, raw in rows:
             dossier = _decode(raw)
             code = dossier['etf_code']

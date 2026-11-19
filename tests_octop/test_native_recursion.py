@@ -61,14 +61,14 @@ class NativeRecursionTests(unittest.TestCase):
         with self.assertRaises(GraphRecursionError):
             self.invoke(8, 24)
 
-    def test_256_nodes_complete_eight_model_calls(self):
-        result = self.invoke(8, 256)
-        self.assertEqual(sum(m.type == "ai" for m in result["messages"]), 8)
+    def test_768_nodes_complete_twenty_model_calls(self):
+        result = self.invoke(20, 768)
+        self.assertEqual(sum(m.type == "ai" for m in result["messages"]), 20)
         self.assertEqual(result["messages"][-1].content, "完成")
 
-    def test_ninth_model_call_is_still_blocked(self):
+    def test_21st_research_model_call_is_blocked(self):
         with self.assertRaisesRegex(RuntimeError, "MODEL_CALL_BUDGET"):
-            self.invoke(9, 256, terminal=False)
+            self.invoke(21, 768, terminal=False)
 
     def test_768_nodes_complete_24_maintenance_model_calls(self):
         result = self.invoke(24, 768, maintenance=True)

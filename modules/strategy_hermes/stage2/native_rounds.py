@@ -4,6 +4,7 @@ The API methods only enqueue validated data or read stored results. Collection,
 MX and publication run in ``native_tick``; no model/HTTP call runs in submit.
 """
 from datetime import datetime
+from decimal import Decimal
 import json
 import os
 from uuid import UUID, uuid4
@@ -21,6 +22,7 @@ from .worker import RequestBudget, SLOTS, due_round, planned_at, publish_round
 
 ACTIVE = ('QUEUED', 'PREPARING', 'READY', 'SUBMITTED', 'PUBLISHING')
 MAX_DECISIONS_BYTES = 256 * 1024
+MAX_NATIVE_ANALYSIS_BYTES = 330_000
 INSTRUCTIONS = """这是当轮已冻结的后台共享数据。逐一判断 analysis.sectors，向 submit 工具提交 decisions 数组，每个 sector_id 恰好一项。
 每项必填 sector_id、phase、evidence_refs。phase 为 NEW、MAINTAIN、STRENGTHEN、WEAKEN、RETREAT、UNKNOWN、NOT_COVERED、EVENT_ONLY。
 新 numeric_contract=scoped-facts-v1 时，每项另填 fact_refs：从该板块 fact_catalog 的键选择至多4项，有板块数字事实时至少引用一项本板块事实。catalog明确区分单板块、成分股、全部已采集板块和已采集A股；数字及口径由程序按引用渲染。
@@ -74,6 +76,48 @@ def _validate_decisions(decisions, request):
         raise ValueError('decisions must cover every input sector exactly once')
 
 
+def _native_model_sector(evidence, *, brief=False):
+    """Keep all decision options and reference IDs in the V3 tool response."""
+    options = dict(evidence['etf_options'])
+    option_fields = ('etf', 'name', 'index', 'weight_as_of', 'association_basis', 'exposure_basis', 'held',
+                     'matched_count', 'quote', 'rule', 'trade_unit', 'execution_eligibility', 'execution_reasons')
+    pair_fields = ('known_exposure', 'max_possible_exposure', 'upper_bound_status', 'exposure_tier',
+                   'representativeness_status', 'reason_codes')
+    stat_fields = ('value', 'unit', 'status', 'as_of_date', 'source', 'covered_days', 'required_days')
+    for key in ('products', 'observation_products'):
+        products = []
+        for row in options.get(key, ()):
+            fields = (('etf', 'name', 'index', 'weight_as_of', 'exposure_basis', 'held')
+                      if brief and key == 'observation_products' else option_fields)
+            product = {field: row[field] for field in fields if row.get(field) is not None}
+            pair = row['representativeness']
+            product['representativeness'] = {field: pair[field] for field in pair_fields}
+            if not brief or key == 'products':
+                stats = {
+                    stat: {field: row['reference_stats'][stat][field] for field in stat_fields
+                           if row['reference_stats'][stat].get(field) is not None}
+                    for stat in ('aum_yuan', 'adv20', 'adv5')
+                }
+                for stat in stats.values():
+                    if 'value' in stat:
+                        # Disambiguate large currency values from contact numbers.
+                        stat['value'] = format(Decimal(stat['value']), 'E')
+                product['reference_stats'] = stats
+            products.append(product)
+        options[key] = products
+    catalog = {key: {'scope': fact['scope'], 'text': fact['text']}
+               for key, fact in evidence['fact_catalog'].items()}
+    return {**evidence, 'etf_options': options, 'fact_catalog': catalog}
+
+
+def _bounded_native_analysis(analysis):
+    for brief in (False, True):
+        view = {**analysis, 'sectors': [_native_model_sector(row, brief=brief) for row in analysis['sectors']]}
+        if len(encode(view).encode('utf-8')) <= MAX_NATIVE_ANALYSIS_BYTES:
+            return view
+    raise ValueError('native analysis exceeds transport budget')
+
+
 class NativeRounds:
     def __init__(self, ledger, calendar, paused=lambda: False):
         self.ledger, self.calendar, self.paused = ledger, calendar, paused
@@ -125,13 +169,14 @@ class NativeRounds:
         with self.ledger._connect() as conn:
             row = conn.execute('''SELECT j.trade_date,j.slot,j.state,j.expires_at,j.error_code,
                 CASE WHEN j.state='READY' THEN j.context->'analysis' ELSE NULL END,
+                j.context->'request'->'etf_policy'->>'prompt_version',
                 t.state,t.report_id,t.error_code,j.expires_at<=clock_timestamp(),j.failure_stage
                 FROM native_round_attempts j LEFT JOIN round_tasks t
                 ON (t.ns,t.trade_date,t.slot)=(j.ns,j.trade_date,j.slot)
                 WHERE j.ns=%s AND j.run_id=%s''', (self.ledger.ns,run_id)).fetchone()
             if row is None:
                 raise ValueError('native run not found')
-            day,slot,state,expires,error,context,round_state,report_id,round_error,expired,failure_stage = row
+            day,slot,state,expires,error,context,prompt_version,round_state,report_id,round_error,expired,failure_stage = row
             if round_state == 'PUBLISHED' and state != 'FAILED':
                 state,error = 'PUBLISHED',None
             elif state in ACTIVE and (expired or round_state == 'FAILED'):
@@ -142,7 +187,10 @@ class NativeRounds:
             if state == 'FAILED':
                 result['stage'] = failure_stage
             if state == 'READY':
-                result.update(analysis=_decode(context),instructions=INSTRUCTIONS)
+                instructions = INSTRUCTIONS
+                if prompt_version == "etf-representativeness-v1":
+                    instructions += "\nETF观察项可在定性理由中引用，数值用 fact_refs。只选择 products 中的ETF，同源支持及暴露档位仅为研判事实，不自动形成选择。"
+                result.update(analysis=_decode(context),instructions=instructions)
             if state == 'PUBLISHED':
                 raw = conn.execute("SELECT payload FROM events WHERE ns=%s AND kind='report' AND id=%s",
                                    (self.ledger.ns,report_id)).fetchone()
@@ -337,6 +385,8 @@ def _prepare_context(queue, cache, args, client, job, now):
                     numeric_contract=request.get('numeric_contract'),
                     etf_selection_contract=request.get('etf_selection_contract'),
                     research_sector_ids=[row['sector_id'] for row in ranked[:MAX_RESEARCH_SECTORS]])
+    if (request.get('etf_policy') or {}).get('policy_mode') == 'V3_ENFORCE':
+        analysis = _bounded_native_analysis(analysis)
     return dict(calendar=days,mapping=mapping,market=market.body if market else None,
                 cutoff=cutoff.isoformat(),request=request,analysis=analysis)
 
@@ -383,7 +433,8 @@ def native_tick(queue, cache, args, client, now=None):
                 if recovery:
                     report['manual_recovery'] = recovery
                 saved = publish_round(ledger,job['claim'],report,context['calendar'],context['mapping'],market,
-                                      targets=('redis','octop') if args.qq else ('redis',))
+                                      targets=('redis','octop') if args.qq else ('redis',),
+                                      prepared=context['request'])
                 with ledger._connect() as conn:
                     conn.execute(f'''UPDATE {job['table']} SET state='PUBLISHED',report_id=%s,
                         updated_at=clock_timestamp() WHERE ns=%s AND run_id=%s''',(saved['id'],ledger.ns,run_id))

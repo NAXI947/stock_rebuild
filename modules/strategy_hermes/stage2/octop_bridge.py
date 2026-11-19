@@ -312,6 +312,9 @@ async def analyze(request, timeout):
                     configured_model=model_ref)
     skill, skill_meta = _selected_skill()
     prompt = PROMPT
+    if request.get("etf_policy_version") == "etf-representativeness-v1":
+        prompt += ("\nobservation_products 仅用于定性解释及引用 fact_refs。仅从 products 选择 ETF。"
+                   "暴露档位和同源支持是研判事实，选择可留空。")
     if request.get("research_explanations") is True:
         targets = request.get("research_sector_ids")
         if not isinstance(targets, list) or len(targets) > 6 or not all(isinstance(sid, str) for sid in targets):

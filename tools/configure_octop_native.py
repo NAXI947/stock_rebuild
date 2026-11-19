@@ -26,14 +26,16 @@ WORKSPACE = "/data/.octop/stock-native-workspace"
 SLOTS = ("09:35", "10:35", "13:05", "14:05", "14:30")
 MAX_INPUT_LENGTH = 128000
 MAX_OUTPUT_TOKENS = 28000
+MODEL_CALLS_PER_ROUND = 20
+GRAPH_RECURSION_LIMIT = 768
 
-WORKFLOW = """你是受控板块轮动研判专家。只执行本轮一次研判，用三个 stock_hermes 工具完成流程。
+WORKFLOW = f"""你是受控板块轮动研判专家。只执行本轮一次研判，用三个 stock_hermes 工具完成流程。
 定时指令指定 slot。先调用 prepare(slot)，服务端决定真实交易日、可用快照、轮次和run_id。
 若 state 为 QUEUED、PREPARING、RUNNING 等处理中状态，调用 status(run_id)取得进展，最多三次等待。
 READY 时读取返回的全部板块证据及研究范围，逐板块研判，然后调用 submit(run_id, decisions)。decisions 参数是一个JSON数组字符串，包含每个输入板块且每个恰好一次。
 submit 返回仍在处理中时用 status 等待。PUBLISHED 表示报告已保存，可在最终回复引用报告编号和QQ实际投递状态；SKIPPED 直接简述原因；FAILED/接口报错则如实报告失败，不声称完成。
 这三种工具之外不调用任何工具，不委派子代理，不自行采集或发送消息，不读写文件，不填写或推测现价/权重/成交/来源时间。
-本轮最多8次模型调用，单次输出上限28000 token（包含模型推理预算），单次模型时限120秒。不要重复推演或输出思考过程。先保证每板块基础字段完整，再给有界研究解释。
+本轮最多{MODEL_CALLS_PER_ROUND}次模型调用，单次输出上限28000 token（包含模型推理预算），单次模型时限120秒。不要重复推演或输出思考过程。先保证每板块基础字段完整，再给有界研究解释。
 以下技能规范与结构化判断格式适用于submit的decisions；其中历史“只返回JSON/排程/QQ桥接”的文字仅定义判断格式与系统职责，本轮以本段的工具提交顺序为准。
 最终回复直接带出PUBLISHED工具回执中的feedback研判简报，并附QQ实际投递状态。不得将模型自己的判断当成已落库回执。
 """
@@ -62,9 +64,9 @@ def agent_body(model_ref, prompt):
                   memory={"memory_enabled": False, "extract_on_session_end": False})
     return dict(name=NAME, description=MARKER, system_prompt=prompt, default_model=model_ref,
                 config=config, skill_package_ids=[], knowledge_base_ids=[], mcp_servers=[SERVER],
-                # OCTOP maps max_iters to LangGraph node steps, including all
-                # middleware hooks. Model calls have a separate hard cap of 8.
-                max_iters=256, max_input_length=MAX_INPUT_LENGTH, max_tokens=MAX_OUTPUT_TOKENS, is_shared=False)
+                # OCTOP counts middleware nodes in the graph budget.
+                max_iters=GRAPH_RECURSION_LIMIT, max_input_length=MAX_INPUT_LENGTH,
+                max_tokens=MAX_OUTPUT_TOKENS, is_shared=False)
 
 
 class Client:
@@ -96,7 +98,8 @@ def configure(args):
     plan = dict(expert=NAME, marker=MARKER, mcp_server=SERVER, mcp_url=MCP_URL,
                 model=args.model_ref, workspace=WORKSPACE, cron_enabled=args.enable_cron,
                 slots=list(SLOTS), prompt_sha256=sha256(prompt.encode()).hexdigest(),
-                graph_recursion_limit=256, model_calls_per_round=8, model_timeout_seconds=120,
+                graph_recursion_limit=GRAPH_RECURSION_LIMIT, model_calls_per_round=MODEL_CALLS_PER_ROUND,
+                model_timeout_seconds=120,
                 max_input_length=MAX_INPUT_LENGTH, max_tokens=MAX_OUTPUT_TOKENS)
     if args.bundle_file:
         bundle = dict(schema=MARKER, server=SERVER, mcp_url=MCP_URL,

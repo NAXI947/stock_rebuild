@@ -72,7 +72,7 @@ def rotation_window(ledger, days, day, slot, report_id):
                  planned_at=planned_at(d,s).isoformat()) for d,s in keys]
 
 
-def publish_round(ledger, claim, envelope, days, mapping, market, *, targets=("redis",)):
+def publish_round(ledger, claim, envelope, days, mapping, market, *, targets=("redis",), prepared=None):
     if envelope.get("input_kind") != ledger.origin:
         raise ValueError("round report input kind does not match its environment")
     if envelope.get("purpose") == READ_ONLY_OBSERVATION:
@@ -87,9 +87,15 @@ def publish_round(ledger, claim, envelope, days, mapping, market, *, targets=("r
         if market and moment(market.observed_at)>at:
             raise ValueError("market snapshot postdates the report publication")
     octop = envelope.get("octop", {})
+    prepared = prepared or {}
+    policy = prepared.get("etf_policy") or {}
+    mode = policy.get("policy_mode", "V2")
+    pairs = prepared.get("etf_pair_facts")
     recommendations = evaluate_recommendations(event, mapping, market,
         core_leaders=octop.get("core_leaders"), event_members=octop.get("event_members"),
-        etf_choices=octop.get("etf_choices"))
+        etf_choices=octop.get("etf_choices"),
+        representation=pairs if mode == "V3_ENFORCE" else None,
+        selection_audit=octop.get("etf_selection_audit") if mode == "V3_ENFORCE" else None)
     event["candidates"] = recommendation_candidates(recommendations)
     # One saved evaluation feeds display, candidate admission, and replay.
     metadata=dict(penetration=recommendations, etf_recommendations=recommendations,
@@ -103,7 +109,31 @@ def publish_round(ledger, claim, envelope, days, mapping, market, *, targets=("r
         metadata["octop"] = envelope["octop"]
     if "manual_recovery" in envelope:
         metadata["manual_recovery"] = envelope["manual_recovery"]
-    return ledger.publish(claim,event,days,instrument_units(mapping,at),metadata,targets=targets)
+    if policy:
+        metadata["etf_policy"] = policy
+    options = {}
+    quoted = sorted(octop.get("market_evidence", {}))
+    if mode == "V3_ENFORCE":
+        options["etf_projection"] = dict(policy=policy, pairs=pairs, mapping=mapping, quote_sectors=quoted)
+    elif mode == "V3_SHADOW":
+        from copy import deepcopy
+        from .etf_representativeness import shadow_result
+
+        def shadow_recommendations():
+            result = evaluate_recommendations(deepcopy(event), deepcopy(mapping), deepcopy(market),
+                core_leaders=deepcopy(octop.get("core_leaders")), event_members=deepcopy(octop.get("event_members")),
+                etf_choices=deepcopy(octop.get("etf_choices")), representation=deepcopy(pairs))
+            return dict(policy=deepcopy(policy), pairs=deepcopy(pairs), mapping=deepcopy(mapping),
+                        recommendations=result, quote_sectors=list(quoted))
+
+        diagnostic = prepared.get("etf_shadow_error")
+        if not diagnostic:
+            projection, diagnostic = shadow_result("RECOMMEND", shadow_recommendations)
+            if projection is not None:
+                options["etf_projection"] = projection
+        if diagnostic:
+            metadata["representation_shadow_error"] = diagnostic
+    return ledger.publish(claim,event,days,instrument_units(mapping,at),metadata,targets=targets,**options)
 
 
 def run_due(ledger, now, days, mapping, market, analyst, *, prepare=None, targets=("redis",)):
@@ -130,13 +160,15 @@ def run_due(ledger, now, days, mapping, market, analyst, *, prepare=None, target
                 tracked.update(item["sector_id"] for item in row.get("entry_sources", ()))
         request=dict(trade_date=day,round_slot=slot,planned_at=planned.isoformat(),
                      tracked_sectors=sorted(tracked),market_snapshot_id=market.snapshot_id if market else None)
+        prepared = None
         if prepare is None:
             report = budget.call("hermes", lambda timeout: analyst(request, budget, timeout),
                                  attempts=2, timeout=35)
         else:
             request["active_directions"] = view.get("rotation", {})
-            report = analyst(prepare(request, budget), budget)
-        return publish_round(ledger,task,report,days,mapping,market,targets=targets)
+            prepared = prepare(request, budget)
+            report = analyst(prepared, budget)
+        return publish_round(ledger,task,report,days,mapping,market,targets=targets,prepared=prepared)
     except Exception as exc:
         ledger.fail_round(task,type(exc).__name__)
         raise

@@ -62,7 +62,7 @@ def apply_candidate_blocks(metadata, blocked):
         return metadata
     updated = {**metadata, "execution_candidate_blocks": blocked}
     original = metadata.get("etf_recommendations", {})
-    if original.get("method") != "etf-direction-first-v2":
+    if original.get("method") not in ("etf-direction-first-v2", "etf-direction-first-v3"):
         return updated
     result = deepcopy(original)
     reasons = {item["etf"]: item["reason"] for item in blocked}

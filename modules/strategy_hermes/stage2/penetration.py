@@ -5,6 +5,7 @@ import re
 
 from ..adapter import normalize
 from ..simulator import CODE, PRECISION, decimal, integer, moment
+from .etf_representativeness import METHOD as V3_METHOD, evaluate_pair_representativeness
 from .inputs import document
 
 MIN_ADV20 = Decimal("30000000")
@@ -341,10 +342,7 @@ def _usable_stock_quotes(stock_quotes, at, reference, cache):
     return cache[key]
 
 
-def _recommend_sector(mapping, sid, market, at, core, core_status, events, *, quote_cache=None,
-                      direction_policy=False):
-    from .momentum import aggregate, check, evaluate as momentum, history_ready, history_count, valid_quote
-
+def _formal_members(mapping, sid, at):
     sector = mapping["sectors"].get(sid) or {}
     raw_members = sector.get("members") if isinstance(sector,dict) else None
     members = {code for code in raw_members if isinstance(code,str) and STOCK_ID.fullmatch(code)} if isinstance(raw_members,list) else set()
@@ -360,6 +358,25 @@ def _recommend_sector(mapping, sid, market, at, core, core_status, events, *, qu
             members=set()
     except (KeyError,TypeError,ValueError):
         members=set()
+    return members, complete_members
+
+
+def _dated_weights(raw, at):
+    if isinstance(raw, dict) and raw.get("available_at"):
+        try:
+            if moment(raw["available_at"]) > at:
+                return None
+        except (ValueError, TypeError):
+            return None
+    return weights(raw, at.date())
+
+
+def _recommend_sector(mapping, sid, market, at, core, core_status, events, *, quote_cache=None,
+                      direction_policy=False, weight_cache=None):
+    from .momentum import aggregate, check, evaluate as momentum, history_ready, history_count, valid_quote
+
+    members, complete_members = _formal_members(mapping, sid, at)
+    sector = mapping["sectors"].get(sid) or {}
     if not members and (not events if direction_policy else len(events) < 5):
         return dict(scope_mode="sector_members", core_status=core_status, products=[], representatives=[],
                     static_representatives=[], reason="SECTOR_MEMBERS_UNAVAILABLE", evaluation_complete=False,
@@ -376,18 +393,15 @@ def _recommend_sector(mapping, sid, market, at, core, core_status, events, *, qu
     products, eligible = [], {}
     missing_weights, missing_indexes = 0, set()
     quote_cache = {} if quote_cache is None else quote_cache
+    weight_cache = {} if weight_cache is None else weight_cache
     for etf, product in sorted(mapping["products"].items()):
         if not isinstance(product, dict) or not CODE.fullmatch(etf):
             continue
         index = product.get("index_code")
         raw_basis = mapping["weights"].get(index)
-        basis = weights(raw_basis, at.date())
-        if direction_policy and isinstance(raw_basis, dict) and raw_basis.get("available_at"):
-            try:
-                if moment(raw_basis["available_at"]) > at:
-                    basis = None
-            except (ValueError, TypeError):
-                basis = None
+        if index not in weight_cache:
+            weight_cache[index] = _dated_weights(raw_basis, at) if direction_policy else weights(raw_basis, at.date())
+        basis = weight_cache[index]
         if basis is None:
             # A catalog entry without weights has no demonstrated relationship
             # to this sector. Keep the coverage gap without inventing a candidate.
@@ -515,7 +529,7 @@ def evaluate_recommendations_legacy(report_event, mapping, market, *, core_leade
     report = normalize(report_event)
     raw = document(report["raw"])
     at = moment(report["at"])
-    explanations, quote_cache = {}, {}
+    explanations, quote_cache, weight_cache = {}, {}, {}
     with localcontext(PRECISION):
         for sid, signal in report["sectors"].items():
             source = raw["sectors"][signal["row"]]
@@ -531,7 +545,7 @@ def evaluate_recommendations_legacy(report_event, mapping, market, *, core_leade
                 codes, status = [], "UNKNOWN"
             events = _verified_events((event_members or {}).get(sid),at,set(signal.get("sources",[])))
             details = _recommend_sector(mapping,sid,market,at,codes,status,events,quote_cache=quote_cache,
-                                        direction_policy=_direction_policy)
+                                        direction_policy=_direction_policy, weight_cache=weight_cache)
             positive = signal["phase"] in ("NEW","MAINTAIN","STRENGTHEN")
             details["direction"] = signal["phase"]
             for product in details["products"]:
@@ -600,9 +614,7 @@ def _fact_rank(item, mapping, held):
             -(adv20 or Decimal(0)), -len(item.get("matched", [])), item["etf"])
 
 
-def _add_explicit_relations(details, mapping, sid, market, at):
-    """A verified dated sector/index link supplies association, never invented weights."""
-    from .momentum import check, evaluate as momentum
+def _explicit_relations(mapping, sid, at):
     relations = {}
     for row in mapping.get("sector_index_relations", []):
         if (not isinstance(row, dict) or row.get("sector_id") != sid or row.get("verified") is not True
@@ -616,6 +628,13 @@ def _add_explicit_relations(details, mapping, sid, market, at):
         except (ValueError, TypeError, KeyError):
             continue
         relations[row["index_code"]] = row
+    return relations
+
+
+def _add_explicit_relations(details, mapping, sid, market, at, *, representation=None):
+    """A verified dated sector/index link supplies association, never invented weights."""
+    from .momentum import check, evaluate as momentum
+    relations = _explicit_relations(mapping, sid, at)
     existing = {item["etf"] for item in details["products"]}
     for code, product in research_products(mapping, at).items():
         index = product["index_code"]
@@ -623,7 +642,7 @@ def _add_explicit_relations(details, mapping, sid, market, at):
             continue
         # A known weight basis with no intersecting members remains a factual
         # contradiction to review, rather than silently replacing that evidence.
-        if weights(mapping.get("weights", {}).get(index), at.date()) is not None:
+        if representation is None and weights(mapping.get("weights", {}).get(index), at.date()) is not None:
             continue
         quote = (market.body.get("quotes", {}) if market else {}).get(code) or {}
         stats = {**(product.get("stats") or {}), **(product.get("recommendation_stats") or {})}
@@ -710,33 +729,78 @@ def _reference_stats(product, at):
                 adv20=fact(history, "adv20", "history", 20), adv5=fact(history, "adv5", "history", 5))
 
 
-def prepare_etf_facts(mapping, market, at, sector_ids, *, held_codes=(), limit=8):
+def freeze_pair_facts(mapping, at, sector_ids, policy):
+    """Compute the complete associated pair set from one point-in-time mapping."""
+    products = research_products(mapping, at)
+    indexes = {item["index_code"] for item in products.values()}
+    bases = {idx: _dated_weights(mapping.get("weights", {}).get(idx), at) for idx in indexes}
+    facts = {}
+    for sid in dict.fromkeys(sector_ids):
+        members, complete = _formal_members(mapping, sid, at)
+        relations = _explicit_relations(mapping, sid, at)
+        by_index = {}
+        for index, source in bases.items():
+            linked = index in relations
+            known = source[2] if source else {}
+            if not linked and members.isdisjoint(known):
+                continue
+            raw = mapping.get("weights", {}).get(index) or {}
+            proof = raw.get("absolute_weight_proof")
+            by_index[index] = evaluate_pair_representativeness(
+                members, known, sector_members_complete=complete,
+                weights_complete_and_valid=source is not None and raw.get("complete") is True,
+                partial_upper_bound_proven=bool(source and isinstance(proof, dict)
+                    and proof.get("scope") == "FULL_INDEX_ABSOLUTE"
+                    and proof.get("index_code") == index and proof.get("as_of_date") == raw.get("as_of_date")
+                    and proof.get("source_ref") and raw.get("available_at")),
+                explicit_relation=linked, policy=policy)
+            by_index[index].update(explicit_relation=linked, weight_available=source is not None,
+                                   weight_complete=source is not None and raw.get("complete") is True,
+                                   source_time=raw.get("available_at") if source else relations.get(index, {}).get("available_at"))
+        facts[sid] = {
+            code: dict(by_index[p["index_code"]], sector_id=sid, etf=code, index=p["index_code"],
+                       policy_mode=policy["policy_mode"], policy_version=policy["policy_version"],
+                       parameter_digest=policy["parameter_digest"], mapping_version=policy["mapping_version"],
+                       fact_refs=["etf_exposure_" + code.replace(".", "_")]
+                       if by_index[p["index_code"]]["known_exposure"] is not None else [])
+            for code, p in products.items() if p["index_code"] in by_index
+        }
+    return facts
+
+
+def prepare_etf_facts(mapping, market, at, sector_ids, *, held_codes=(), limit=8, representation=None):
     """Bounded shared facts for AI selection; no strategy preference filters this list."""
     if type(limit) is not int or not 1 <= limit <= 32:
         raise ValueError("invalid ETF facts limit")
     at = moment(at) if isinstance(at, str) else at
     held = set(held_codes)
-    result, quote_cache = {}, {}
+    result, quote_cache, weight_cache = {}, {}, {}
     for sid in dict.fromkeys(sector_ids):
         details = _recommend_sector(mapping, sid, market, at, [], "UNKNOWN", set(),
-                                    quote_cache=quote_cache, direction_policy=True)
-        _add_explicit_relations(details, mapping, sid, market, at)
+                                    quote_cache=quote_cache, direction_policy=True, weight_cache=weight_cache)
+        pairs = representation.get(sid, {}) if representation is not None else None
+        _add_explicit_relations(details, mapping, sid, market, at, representation=pairs)
         for item in details["products"]:
             quote = (market.body.get("quotes", {}) if market else {}).get(item["etf"]) or {}
             item.update(_execution_facts(item["etf"], mapping["products"][item["etf"]], quote, at,
                                         market_body=market.body if market else None))
         ranked = sorted(details["products"], key=lambda item: _fact_rank(item, mapping, held))
         chosen, indexes, ready_indexes = [], set(), set()
+        observations = []
         held_count = sum(item["etf"] in held for item in ranked)
         for item in ranked:
             ready_alternative = item["execution_eligibility"] == "READY" and item["index"] not in ready_indexes
-            if item["etf"] not in held and (len(chosen) >= max(limit, held_count)
+            pair = pairs.get(item["etf"]) if pairs is not None else None
+            rejected = pairs is not None and not (pair and pair["entry_allowed"])
+            if rejected and (not pair or (len(observations) >= limit and item["etf"] not in held)):
+                continue
+            if not rejected and item["etf"] not in held and (len(chosen) >= max(limit, held_count)
                     or (item["index"] in indexes and not ready_alternative)):
                 continue
             product = mapping["products"][item["etf"]]
             quote = (market.body.get("quotes", {}) if market else {}).get(item["etf"]) or {}
             execution = {key:item[key] for key in ("execution_eligibility", "execution_reasons", "execution_checks", "trade_unit")}
-            chosen.append(dict(etf=item["etf"], name=product.get("name"), index=item["index"],
+            option = dict(etf=item["etf"], name=product.get("name"), index=item["index"],
                 weight_as_of=item["weight_as_of"], association_status="VERIFIED",
                 association_basis=item.get("association_basis", "WEIGHTED_MEMBERS"),
                 association_evidence=item.get("association_evidence", []), exposure_basis=item["exposure_basis"],
@@ -751,7 +815,14 @@ def prepare_etf_facts(mapping, market, at, sector_ids, *, held_codes=(), limit=8
                           review_required=(product.get("rule") or {}).get("review_required") is True,
                           settlement_cycle=product_settlement(product.get("rule") or {}),
                           price_limit_ratio=(product.get("rule") or {}).get("price_limit_ratio")),
-                **execution))
+                **execution)
+            if pair is not None:
+                option.update(representativeness=pair, exposure_basis=pair["exposure_basis"],
+                              matched_count=pair["matched_count"])
+            if rejected:
+                observations.append(option)
+                continue
+            chosen.append(option)
             indexes.add(item["index"])
             if item["execution_eligibility"] == "READY":
                 ready_indexes.add(item["index"])
@@ -759,20 +830,31 @@ def prepare_etf_facts(mapping, market, at, sector_ids, *, held_codes=(), limit=8
                            reason=details.get("reason"), associated_products=len(ranked),
                            omitted_products=max(0, len(ranked)-len(chosen)), method=DIRECTION_METHOD,
                            mapping_version=mapping["version"])
+        if pairs is not None:
+            result[sid].update(observation_products=observations, method=V3_METHOD,
+                               omitted_count=max(0, len(pairs)-len(observations)-len(chosen)))
     return result
 
 
 def evaluate_recommendations(report_event, mapping, market, *, core_leaders=None, event_members=None,
-                             etf_choices=None):
+                             etf_choices=None, representation=None, selection_audit=None):
     """One direction-first result for notification, workbench and new signal entries."""
     report = normalize(report_event)
     at = moment(report["at"])
     result = evaluate_recommendations_legacy(report_event, mapping, market, core_leaders=core_leaders,
                                             event_members=event_members, _direction_policy=True)
     result.update(method=DIRECTION_METHOD, automatic_method=DIRECTION_METHOD)
+    if representation is not None:
+        result.update(method=V3_METHOD, automatic_method=V3_METHOD)
     all_choices = etf_choices if isinstance(etf_choices, dict) else {}
     for sid, details in result["sectors"].items():
-        _add_explicit_relations(details, mapping, sid, market, at)
+        pairs = representation.get(sid, {}) if representation is not None else None
+        if pairs is not None and details["scope_mode"] != "sector_members":
+            already = {item["etf"] for item in details["products"]}
+            formal = _recommend_sector(mapping, sid, market, at, [], "UNKNOWN", set(), direction_policy=True)
+            details["products"].extend(item for item in formal["products"]
+                                       if item["etf"] in pairs and item["etf"] not in already)
+        _add_explicit_relations(details, mapping, sid, market, at, representation=pairs)
         products = {item["etf"]: item for item in details["products"]}
         for code, item in products.items():
             quote = (market.body.get("quotes", {}) if market else {}).get(code) or {}
@@ -782,6 +864,8 @@ def evaluate_recommendations(report_event, mapping, market, *, core_leaders=None
         valid_selection = (isinstance(requested, list) and len(requested) <= MAX_ETF_CHOICES
             and all(isinstance(code, str) and code in products for code in requested)
             and len(set(requested)) == len(requested))
+        if valid_selection and pairs is not None:
+            requested = [code for code in requested if pairs.get(code, {}).get("entry_allowed") is True]
         selected, indexes = [], set()
         if valid_selection:
             ordered = sorted(requested, key=lambda code:(products[code]["execution_eligibility"] != "READY", requested.index(code)))
@@ -793,6 +877,8 @@ def evaluate_recommendations(report_event, mapping, market, *, core_leaders=None
             selected.sort(key=requested.index)
         details["selection_status"] = "CONFIRMED" if valid_selection else "UNCONFIRMED"
         details["selection_reasons"] = [] if valid_selection else ["ETF_SELECTION_UNCONFIRMED"]
+        if selection_audit and sid in selection_audit:
+            details["selection_audit"] = selection_audit[sid]
         details["requested_choices"] = list(requested) if valid_selection else []
         details["selection_duplicates"] = [code for code in requested if code not in selected] if valid_selection else []
         details["representatives"] = selected
@@ -801,7 +887,10 @@ def evaluate_recommendations(report_event, mapping, market, *, core_leaders=None
         static, static_indexes = [], set()
         for item in sorted(products.values(), key=lambda row: _fact_rank(row, mapping, set(selected))):
             code = item["etf"]
-            if item["index"] not in static_indexes and len(static) < MAX_ETF_CHOICES:
+            pair = pairs.get(code) if pairs is not None else None
+            if pair is not None:
+                item["representativeness"] = pair
+            if (pairs is None or pair and pair["entry_allowed"]) and item["index"] not in static_indexes and len(static) < MAX_ETF_CHOICES:
                 static.append(code)
                 static_indexes.add(item["index"])
             item["reference_static_status"] = item["static_status"]

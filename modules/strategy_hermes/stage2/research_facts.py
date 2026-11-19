@@ -93,9 +93,13 @@ def fact_catalog(evidence, common):
                 f"{row['code']}涨跌{_percent(value, signed=True)}", dict(return_ratio=str(value)),
                 [row.get("ref")], [row.get("observed_at")])
     options = evidence.get("etf_options", {})
-    for row in options.get("products", ()):
+    for row in _reference_products(options):
         code, quote = row["etf"], row.get("quote", {})
+        pair = row.get("representativeness")
         exposure = number(row.get("metrics", {}).get("E_sector"))
+        if pair is not None:
+            value = pair.get("known_exposure")
+            exposure = Decimal(value) if value is not None else None
         if exposure is not None:
             basis = "完整权重" if row.get("exposure_basis") == "COMPLETE" else "已知部分权重"
             result["etf_exposure_" + code.replace(".", "_")] = _fact("ETF_SECTOR", code,
@@ -111,15 +115,29 @@ def fact_catalog(evidence, common):
                         dict(price_cny=quote["price_cny"]), [quote["source"]], [quote["observed_at"]])
             except (ValueError, TypeError):
                 pass
+    for row in options.get("support_facts", ()):
+        if row["union_exposure"] is None:
+            continue
+        key = "etf_support_" + row["etf"].replace(".", "_") + "_" + row["group_id"][:12]
+        basis = "完整" if row["exposure_basis"] == "COMPLETE" else "已知下界"
+        result[key] = _fact("ETF_SUPPORT_STATIC", row["etf"],
+            f"{row['etf']}同源板块参考并集{_percent(row['union_exposure'])}（{basis}）",
+            dict(union_exposure=row["union_exposure"], exposure_basis=row["exposure_basis"],
+                 phase_basis=row["phase_basis"]),
+            [row["taxonomy_version"], row["mapping_version"]])
     result.update(common)
     return result
+
+
+def _reference_products(options):
+    return (*options.get("products", ()), *options.get("observation_products", ()))
 
 
 def _has_unbound_number(text, evidence):
     """Known source dates, clocks and instrument IDs are references, not invented metrics."""
     allowed = {evidence.get("trade_date", ""), evidence.get("sector_name", "")}
     rows = [row for key in ("current", "previous", "stock_evidence") for row in evidence.get(key, ())]
-    rows.extend(evidence.get("etf_options", {}).get("products", ()))
+    rows.extend(_reference_products(evidence.get("etf_options", {})))
     for row in rows:
         for key in ("code", "etf"):
             if isinstance(row.get(key), str):
@@ -159,17 +177,33 @@ def judgment_review(decision, evidence):
     return []
 
 
-def selection(decision, evidence):
+def selection_detail(decision, evidence):
     """Only validate the explicit selection contract here; execution eligibility is separate."""
     if evidence.get("etf_selection_contract") != ETF_SELECTION_CONTRACT:
-        return None, []
+        return None, [], None
     choices = decision.get("etf_choices")
-    allowed = {row["etf"] for row in evidence.get("etf_options", {}).get("products", ())}
+    from .etf_representativeness import REJECTIONS
+    options = evidence.get("etf_options", {})
+    allowed = {row["etf"] for row in options.get("products", ())}
+    rejected = {row["etf"]: pair["representativeness_status"]
+                for row in options.get("observation_products", ())
+                if (pair := row.get("representativeness", {})).get("representativeness_status") in REJECTIONS}
     if (not isinstance(choices, list) or len(choices) > 3
-            or any(not isinstance(code, str) or code not in allowed for code in choices)
+            or any(not isinstance(code, str) or (code not in allowed and code not in rejected) for code in choices)
             or len(set(choices)) != len(choices)):
-        return None, ["ETF_SELECTION_UNCONFIRMED"]
-    return choices, []
+        return None, ["ETF_SELECTION_UNCONFIRMED"], None
+    effective = [code for code in choices if code in allowed]
+    removed = {code: rejected[code] for code in choices if code not in allowed}
+    audit = None
+    if removed:
+        audit = dict(original_choices=choices, effective_choices=effective, removed=removed,
+                     reason="EMPTY_AFTER_WEAK_PAIR_STRIP" if not effective else None)
+    return effective, [], audit
+
+
+def selection(decision, evidence):
+    choices, review, _ = selection_detail(decision, evidence)
+    return choices, review
 
 
 def explanation(decision, evidence, checked, review=()):

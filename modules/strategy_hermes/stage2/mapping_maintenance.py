@@ -20,6 +20,7 @@ from ..ledger import encode, fingerprint
 from ..left_right_backfill import Interrupted
 from ..simulator import CHINA, CODE, decimal, moment
 from .build_sources import stock_identity, csi_evidence, CSI
+from .cni_weights import apply_reference as complete_cni_basis, identity as cni_identity, provider_code as cni_code
 from .discovery import select_directions
 from .market_bootstrap import ProbeError, save as save_market
 from .membership_refresh import _page
@@ -95,6 +96,11 @@ def _obtain(ledger, api, params, config, now, request, checkpoint, *, period=Non
     return _read_market(ledger, result['receipt']['batch'], with_batch=api == 'etf_basic')
 
 
+def _supported_catalog_index(index):
+    return (isinstance(index, str) and INDEX_CODE.fullmatch(index)
+            and (not index.endswith(".CNI") or cni_code(index)))
+
+
 def catalog_updates(mapping, rows, available, batch=None):
     """Catalog classification remains evidence; it never grants trading approval."""
     changed, invalid = 0, 0
@@ -104,7 +110,7 @@ def catalog_updates(mapping, rows, available, batch=None):
             invalid += 1
             continue
         old = mapping['products'].get(code, {})
-        if not isinstance(index, str) or not INDEX_CODE.fullmatch(index):
+        if not _supported_catalog_index(index):
             # A delisting can still retire a known product when its source no
             # longer returns an index. Unknown new relationships stay pending.
             index = old.get('index_code')
@@ -117,6 +123,8 @@ def catalog_updates(mapping, rows, available, batch=None):
         item.update(index_code=index, name=row.get('csname') or old.get('name') or code,
                     list_status=state, source_classification=row.get('etf_type'),
                     list_date=row.get('list_date'))
+        if batch and cni_code(index):
+            item['index_identity'] = cni_identity(index)
         if not old or relationship_changed or classification_changed or state != 'L':
             item['rule'] = dict(verified=False, index_code=index, scope=None,
                                 reason='PRODUCT_DELISTED' if state == 'D' else 'PRODUCT_REFERENCE_REQUIRES_VERIFICATION')
@@ -145,7 +153,7 @@ def _catalog_review(mapping, body, state):
         reason = None
         if not CODE.fullmatch(code):
             reason = 'product_scope'
-        elif (not index or not INDEX_CODE.fullmatch(index)) and not mapping['products'].get(code, {}).get('index_code'):
+        elif not _supported_catalog_index(index) and not mapping['products'].get(code, {}).get('index_code'):
             reason = 'missing_relationship' if not index else 'unsupported_index'
         if reason:
             review['count'] += 1
@@ -190,7 +198,7 @@ def _catalog_maintenance(ledger, updated, config, now, day, request, checkpoint,
             review = _catalog_review(updated, body, state)
             rows = body['rows']
             valid = [r for r in rows if CODE.fullmatch(r['ts_code'])
-                     and r['index_code'] and INDEX_CODE.fullmatch(r['index_code'])]
+                     and _supported_catalog_index(r['index_code'])]
             receipt = save_reference(ledger, 'etf_basic',
                 {'list_status':state, 'maintenance_day':now.date().isoformat()}, rows, valid) if valid else None
             count, excluded = catalog_updates(updated, rows, available, receipt['batch'] if receipt else None)
@@ -364,17 +372,63 @@ def _aum_maintenance(ledger, mapping, calendar, config, now, day, request, check
             _record(summary, 'aum', value, 'PENDING', **diagnostic)
 
 
-def _priorities(ledger):
+def _priorities(ledger, now=None):
     with ledger._connect() as conn:
         cycles = conn.execute("SELECT etf,body FROM cycles WHERE ns=%s AND status IN ('OPEN','WAIT_BUY','WAIT_EXIT') ORDER BY id LIMIT 100", (ledger.ns,)).fetchall()
-        rotation = conn.execute('SELECT sector_id,body FROM rotation WHERE ns=%s ORDER BY sector_id LIMIT 100', (ledger.ns,)).fetchall()
+        if now is None:
+            rotation = conn.execute('SELECT sector_id,body FROM rotation WHERE ns=%s ORDER BY sector_id LIMIT 100',
+                                    (ledger.ns,)).fetchall()
+        else:
+            rotation = conn.execute("""
+                SELECT r.sector_id,r.body FROM rotation r JOIN events e
+                  ON e.ns=r.ns AND e.kind='report' AND e.id=r.body->>'report_id'
+                WHERE r.ns=%s AND left(e.at,10)=%s ORDER BY r.sector_id LIMIT 100
+                """, (ledger.ns, now.date().isoformat())).fetchall()
     held = [r[0] for r in cycles]
     sectors = []
     for _, body in cycles:
         row = _decode(body)
         sectors.extend([row.get('primary_sector'), *(p.get('sector_id') for p in row.get('entry_sources', ()))])
-    active = [sid for sid, body in rotation if _decode(body).get('member') is True]
+    active = [sid for sid, body in rotation if _decode(body).get('member') is True
+              and (now is None or _decode(body).get('phase') in ('NEW','STRENGTHEN','MAINTAIN','STRENGTHEN_X2'))]
     return held, [s for s in dict.fromkeys(sectors + active) if isinstance(s, str)]
+
+
+def _weight_targets(mapping, held, sectors, now, day, policy):
+    from ..product_materials import material_seed_config
+    from .penetration import _dated_weights, _explicit_relations, _formal_members
+    products = {code: product['index_code'] for code, product in mapping['products'].items()
+                if product.get('list_status','L') == 'L' and _supported_catalog_index(product.get('index_code'))}
+    active = sorted(set(products.values()))
+    if policy:
+        active = [index for index in active if policy.due('weights:'+index)]
+    members = set().union(*(_formal_members(mapping, sid, now)[0] for sid in sectors))
+    explicit = set().union(*(_explicit_relations(mapping, sid, now) for sid in sectors))
+    top = {products[code] for code in held if code in products}
+    _, seed_codes = material_seed_config(mapping)
+    seeds = {products[code] for code in seed_codes if code in products}
+
+    def tier(index):
+        if index in top:
+            return 0
+        raw = mapping['weights'].get(index) or {}
+        basis = _dated_weights(raw, now)
+        if index in explicit or (basis and sum(basis[2][code] for code in members.intersection(basis[2])) >= Decimal('.03')):
+            return 1
+        return 2 if index in seeds else 3
+
+    if active:
+        shift = day.toordinal() * 2 % len(active)
+        active = active[shift:] + active[:shift]
+    ranked = sorted(active, key=tier)
+    ordinary = [i for i in ranked if tier(i) == 3]
+    reserved = ordinary[:2]
+    selected = list(dict.fromkeys(ranked[:MAX_INDEXES-len(reserved)] + reserved + ranked))[:MAX_INDEXES]
+    if policy:
+        deferred = [i for i in ranked if i not in selected]
+        for index in deferred[:MAX_INDEXES]:
+            policy.defer('weights:'+index, day.isoformat())
+    return selected
 
 
 def _member_attempt(mapping, sid, now, priorities):
@@ -424,6 +478,9 @@ def _members(ledger, mapping, market, identities, identity_batch, priorities, da
     scope = {}
     targets, boards = sector_targets(mapping, market, priorities, now, scope=scope, policy=policy)
     summary['members_scope'] = scope
+    if policy:
+        for sid in scope['deferred']:
+            policy.defer('members:'+sid, day.isoformat())
     identity_at = None
     if identities and identity_batch:
         with ledger._connect() as conn:
@@ -580,6 +637,24 @@ def _rule_hash(url):
     return sha256(_official_bytes(url)).hexdigest()
 
 
+def _exchange_basis(ledger, index, first, day, now, config, request, checkpoint, classes,
+                    old, identity_batch, previous_identity_batch, *, refresh):
+    reference = cni_identity(index)
+    source_code = reference['data_index_code'] if reference else index
+    body, available = _obtain(ledger, 'index_weight',
+        dict(index_code=source_code, start_date=first.strftime('%Y%m%d'), end_date=day.strftime('%Y%m%d')),
+        config, now, request, checkpoint, refresh=refresh)
+    normalized = weight_rows(body['rows'], source_code, first, day)
+    basis = weight_basis(body['rows'], source_code, first, day, classes, old, identity_batch=identity_batch,
+                         previous_identity_batch=previous_identity_batch)
+    complete_cni_basis(basis, index)
+    receipt = save_reference(ledger, 'index_weight', {'index_code':source_code,'maintenance_day':now.date().isoformat()},
+                             body['rows'], normalized)
+    basis['absolute_weight_proof'] = dict(scope='FULL_INDEX_ABSOLUTE', index_code=index,
+                                         as_of_date=basis['as_of_date'], source_ref=receipt['batch'])
+    return basis, available, receipt
+
+
 def _maintain(ledger, mapping, market, calendar, config, captures, now, request, checkpoint, mode,
               updated, summary):
     """Return a candidate version plus per-item receipts; caller publishes it.
@@ -597,7 +672,7 @@ def _maintain(ledger, mapping, market, calendar, config, captures, now, request,
         summary['reason'] = 'COMPLETED_CALENDAR_UNAVAILABLE'
         return _finish(mapping,updated,summary)
     day = max(closed)
-    held, priorities = _priorities(ledger)
+    held, priorities = _priorities(ledger, now)
     identities, classes, identity_batch = defaultdict(list), {}, None
     with ledger._connect() as conn:
         reference = conn.execute("SELECT batch_id FROM supplier_batches WHERE api='stock_basic' "
@@ -619,42 +694,24 @@ def _maintain(ledger, mapping, market, calendar, config, captures, now, request,
             summary['identity_status'] = 'UNAVAILABLE'
         _members(ledger,updated,market,identities,identity_batch,priorities,day,captures,now,request,checkpoint,summary,
                  review=mode == 'review', policy=policy)
-        # Held/verified products first, with a rolling two-index lane to avoid
-        # starving new catalog products while keeping a fixed request bound.
-        primary = list(dict.fromkeys([updated['products'][c]['index_code'] for c in held if c in updated['products']]
-                    + [p['index_code'] for p in updated['products'].values() if p.get('rule',{}).get('verified') is True]))
-        indexes = sorted({p['index_code'] for p in updated['products'].values() if p.get('list_status','L') == 'L'
-                          and isinstance(p.get('index_code'),str) and INDEX_CODE.fullmatch(p['index_code'])})
-        rotating = [i for i in indexes if i not in primary[:MAX_INDEXES-2]]
-        if rotating:
-            shift = day.toordinal() * 2 % len(rotating)
-            rotating = rotating[shift:] + rotating[:shift]
-        candidates = list(dict.fromkeys(primary[:MAX_INDEXES-2] + rotating + primary))
-        if policy:
-            candidates = [i for i in candidates if policy.due('weights:'+i)]
-        targets = candidates[:MAX_INDEXES]
+        targets = _weight_targets(updated, held, priorities, now, day, policy)
         first = day - timedelta(days=62)
         for index in targets:
             key = 'weights:'+index
             if policy and not policy.begin(key, day.isoformat()):
                 continue
             try:
-                body, available = _obtain(ledger,'index_weight',dict(index_code=index,start_date=first.strftime('%Y%m%d'),end_date=day.strftime('%Y%m%d')),
-                                          config,now,request,checkpoint,
-                                          refresh=(mode == 'review' and (index in updated.get('pending_weights',{})
-                                              or updated['weights'].get(index,{}).get('complete') is not True))
-                                              or bool(policy and policy.pending[key]['attempts'] > 1))
                 old = updated['weights'].get(index, {})
-                basis = weight_basis(body['rows'],index,first,day,classes,old,identity_batch=identity_batch,
-                                     previous_identity_batch=mapping.get('stock_catalog_batch'))
+                refresh = (mode == 'review' and (index in updated.get('pending_weights',{})
+                           or old.get('complete') is not True)) or bool(policy and policy.pending[key]['attempts'] > 1)
+                basis, available, receipt = _exchange_basis(ledger, index, first, day, now, config, request,
+                    checkpoint, classes, old, identity_batch, mapping.get('stock_catalog_batch'), refresh=refresh)
                 if old.get('as_of_date','') > basis['as_of_date']:
                     _record(summary,'weights',index,'RETAINED',reason='OLDER_SOURCE')
                     if policy:
                         policy.failed(key, dict(error_kind='DATE_MISMATCH'))
                     continue
-                normalized = weight_rows(body['rows'],index,first,day)
-                receipt = save_reference(ledger,'index_weight',{'index_code':index,'maintenance_day':now.date().isoformat()},body['rows'],normalized)
-                if not basis['complete']:
+                if not basis['complete'] and not cni_code(index):
                     try:
                         scope = dict(index=index, period=now.date().isoformat())
                         cached = _cached(ledger,'weight_constituents',scope)
@@ -697,7 +754,9 @@ def _maintain(ledger, mapping, market, calendar, config, captures, now, request,
                         policy.failed(key, dict(error_kind='FIELD_MISMATCH'))
                     continue
                 same = (basis.get('as_of_date') == old.get('as_of_date') and basis.get('rows') == old.get('rows')
-                        and basis.get('complete') == old.get('complete'))
+                        and basis.get('complete') == old.get('complete')
+                        and basis.get('index_identity') == old.get('index_identity')
+                        and bool(basis.get('absolute_weight_proof')) == bool(old.get('absolute_weight_proof')))
                 if not same:
                     basis.update(available_at=available.isoformat(),source_batches=[receipt['batch']])
                     updated['weights'][index] = basis

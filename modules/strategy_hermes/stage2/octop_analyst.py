@@ -200,15 +200,29 @@ class OctopAnalyst:
                 evidence[selected]["current"].extend(items)
             except (TimeoutError, ConnectionError, ValueError, KeyError, TypeError) as exc:
                 mx = {"status": "UNAVAILABLE", "error_type": type(exc).__name__, "items": [], "sector_id": selected}
-        from .penetration import prepare_etf_facts
+        from .etf_representativeness import freeze_policy, shadow_result
+        from .penetration import freeze_pair_facts, prepare_etf_facts
+        policy = freeze_policy(self.mapping, self.cutoff)
+        representation, shadow_error = None, None
+        if policy["policy_mode"] == "V3_ENFORCE":
+            representation = freeze_pair_facts(self.mapping, self.cutoff, evidence, policy)
+        elif policy["policy_mode"] == "V3_SHADOW":
+            from copy import deepcopy
+            representation, shadow_error = shadow_result("PREPARE", lambda: freeze_pair_facts(
+                deepcopy(self.mapping), self.cutoff, tuple(evidence), deepcopy(policy)))
         options = prepare_etf_facts(self.mapping, self.market, self.cutoff, evidence,
-                                    held_codes=request.get("held_etfs", ()))
+                                    held_codes=request.get("held_etfs", ()),
+                                    representation=representation if policy["policy_mode"] == "V3_ENFORCE" else None)
+        if policy["policy_mode"] == "V3_ENFORCE" and policy["taxonomy_version"]:
+            from .etf_support_facts import attach_static_support
+            attach_static_support(options, self.mapping, representation, policy)
         common = market_facts(self.market, self.cutoff)
         for sid, row in evidence.items():
             row["etf_options"] = {**options.get(sid, {}), "mapping_version": self.mapping["version"]}
             row.update(numeric_contract=NUMERIC_CONTRACT, etf_selection_contract=ETF_SELECTION_CONTRACT,
                        fact_catalog=fact_catalog(row, common))
         return {**request, "evidence": evidence, "mx": mx, "discovery": discovery,
+                "etf_policy": policy, "etf_pair_facts": representation, "etf_shadow_error": shadow_error,
                 "numeric_contract": NUMERIC_CONTRACT, "etf_selection_contract": ETF_SELECTION_CONTRACT}
 
     def _analyze(self, request, budget):
@@ -231,6 +245,8 @@ class OctopAnalyst:
                     "research_explanations": True, "research_sector_ids": research_ids,
                     "numeric_contract": request.get("numeric_contract"),
                     "etf_selection_contract": request.get("etf_selection_contract"),
+                    **({"etf_policy_version": request["etf_policy"]["policy_version"]}
+                       if (request.get("etf_policy") or {}).get("policy_mode") == "V3_ENFORCE" else {}),
                 }, timeout=timeout)
             except (TimeoutError, ConnectionError) as exc:
                 _log_attempt_failure(request, transport_error=exc)
@@ -272,7 +288,7 @@ class OctopAnalyst:
         sectors, judgments, warnings, times, summaries = [], [], [], [], []
         market_evidence, source_facts, stock_evidence, core_leaders = {}, {}, {}, {}
         explanations, research_evidence, unconfirmed = {}, {}, []
-        judgment_reviews, etf_choices, etf_reviews = {}, {}, {}
+        judgment_reviews, etf_choices, etf_reviews, etf_audits = {}, {}, {}, {}
         for sid, context in evidence.items():
             current = context["current"]
             item = decisions.get(sid)
@@ -298,6 +314,8 @@ class OctopAnalyst:
                 etf_choices[sid] = result["etf_choices"]
             if result["etf_selection_review"]:
                 etf_reviews[sid] = result["etf_selection_review"]
+            if result.get("etf_selection_audit"):
+                etf_audits[sid] = result["etf_selection_audit"]
             if explanation:
                 explanations[sid] = explanation
                 refs = set(explanation["counter_evidence_refs"])
@@ -338,6 +356,7 @@ class OctopAnalyst:
                                discovery=request.get("discovery"), research_explanations=explanations,
                                research_explanation_evidence=research_evidence,
                                research_explanations_unconfirmed=unconfirmed, judgment_review=judgment_reviews,
+                               **({"etf_selection_audit": etf_audits} if etf_audits else {}),
                                **(dict(etf_choices=etf_choices, etf_selection_review=etf_reviews,
                                        etf_selection_contract=ETF_SELECTION_CONTRACT)
                                   if request.get("etf_selection_contract") == ETF_SELECTION_CONTRACT else {}),

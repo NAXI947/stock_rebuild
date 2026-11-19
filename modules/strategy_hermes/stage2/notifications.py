@@ -23,6 +23,11 @@ ETF_REASONS = {
     "PRODUCT_RULE": "产品交易规则待核验", "TRADE_UNIT_UNVERIFIED": "交易单位待核验",
     "QUOTE_UNAVAILABLE": "有效报价待补", "QUOTE_INVALID": "报价无效",
     "ETF_SELECTION_UNCONFIRMED": "ETF选择待复核",
+    "NO_OVERLAP_CONFIRMED": "正式板块无正权重交集",
+    "WEAK_OVERLAP_REJECTED": "弱关联观察",
+    "SINGLE_STOCK_CROSSOVER_REJECTED": "单股跨界观察",
+    "WEAK_OVERLAP_UPPER_BOUND_REJECTED": "暴露上界低于底线",
+    "EMPTY_AFTER_WEAK_PAIR_STRIP": "弱关联剔除后本轮未选",
     "RULE_UNVERIFIED": "交易规则待核验", "TRADE_UNIT_CHANGED": "交易单位与冻结规则冲突",
     "RULE_REVIEW_REQUIRED": "产品规则待复核，暂停买入",
     "ENTRY_ADMISSION_UNAVAILABLE": "准入资料暂不可用，暂停买入",
@@ -154,12 +159,15 @@ def _recommendation_sections(report, ranked, names):
     candidates, references, blocked = [], [], []
     reference_groups = ([], [], [])
     missing_weights = 0
-    direction_first = report["input_meta"]["etf_recommendations"].get("method") == "etf-direction-first-v2"
+    direction_first = report["input_meta"]["etf_recommendations"].get("method") in (
+        "etf-direction-first-v2", "etf-direction-first-v3")
     labels = {"CONFIRMED": "AI已选·执行就绪" if direction_first else "动向已确认",
               "STATIC_ONLY": "仅静态匹配", "PENDING": "执行资料待核验" if direction_first else "待核验",
               "OBSERVE": "关联观察", "REJECTED": "执行受限" if direction_first else "静态未通过"}
     for sid in ranked:
         details = groups.get(sid, {})
+        if (details.get("selection_audit") or {}).get("reason") == "EMPTY_AFTER_WEAK_PAIR_STRIP":
+            reference_groups[1].append(f"{names[sid]}（{ETF_REASONS['EMPTY_AFTER_WEAK_PAIR_STRIP']}）")
         selected = details.get("representatives")
         current_codes = set(selected) if isinstance(selected, list) else set()
         static_codes = set(details.get("static_representatives") or [])
@@ -183,6 +191,11 @@ def _recommendation_sections(report, ranked, names):
         for product in products:
             state = product.get("recommendation_status", "PENDING")
             line = f"{names[sid]} {product['etf']}（{labels.get(state, '待核验')}）"
+            pair = product.get("representativeness")
+            if pair is not None and not pair["entry_allowed"]:
+                label = ETF_REASONS.get(pair["representativeness_status"], pair["representativeness_status"])
+                reference_groups[2].append(f"{names[sid]} {product['etf']}（{label}）")
+                continue
             if direction_first and state in ("PENDING", "REJECTED") and product.get("ai_selected"):
                 reasons = [ETF_REASONS.get(reason, reason) for reason in product.get("execution_reasons", ())]
                 blocked.append(f"{names[sid]} {product['etf']}（{'、'.join(reasons) or '执行条件待核验'}）")
@@ -199,6 +212,12 @@ def _recommendation_sections(report, ranked, names):
                 priority = 0 if product['etf'] in current_codes else 1 if product['etf'] in static_codes else 2
                 reference_groups[priority].append(line)
     references = [line for group in reference_groups for line in group]
+    if report["input_meta"]["etf_recommendations"].get("method") == "etf-direction-first-v3":
+        support = (report["input_meta"].get("representation") or {}).get("current_support", ())
+        grouped = [row for row in support if row.get("up_branch_count", 0) >= 2]
+        for row in grouped[:2]:
+            conflicts = "，有方向冲突" if row.get("direction_conflicts") else ""
+            references.insert(0, f"{row['etf']}（{row['up_branch_count']}个同源分支含有效加强{conflicts}）")
     return candidates, references, blocked
 
 

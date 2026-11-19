@@ -95,6 +95,14 @@ class PairTests(unittest.TestCase):
         self.assertEqual(shadow_result("PREPARE", lambda: {"partial": object()}),
                          (None, {"stage":"PREPARE", "error":"TypeError"}))
 
+    def test_t32_shadow_rejects_serializable_shape_errors(self):
+        for stage, invalid in (("PREPARE", {"unknown": "not a pair group"}),
+                               ("RECOMMEND", {"recommendations": {"candidates": "not an array"}}),
+                               ("FINALIZE", {"policy": {}, "pairs": {}, "current_support": [], "statistics": "bad"})):
+            with self.subTest(stage=stage):
+                self.assertEqual(shadow_result(stage, lambda: invalid),
+                                 (None, {"stage":stage, "error":"ValueError"}))
+
     def test_t10_cni_completeness_uses_existing_index_weight_rows(self):
         from modules.strategy_hermes.stage2.cni_weights import apply_reference
         from modules.strategy_hermes.stage2.mapping_maintenance import weight_basis

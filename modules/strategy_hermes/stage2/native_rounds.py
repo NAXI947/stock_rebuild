@@ -23,7 +23,7 @@ from .worker import RequestBudget, SLOTS, due_round, planned_at, publish_round
 ACTIVE = ('QUEUED', 'PREPARING', 'READY', 'SUBMITTED', 'PUBLISHING')
 MAX_DECISIONS_BYTES = 256 * 1024
 MAX_NATIVE_ANALYSIS_BYTES = 330_000
-INSTRUCTIONS = """这是当轮已冻结的后台共享数据。逐一判断 analysis.sectors，向 submit 工具提交 decisions 数组，每个 sector_id 恰好一项。
+_SCOPED_FACTS_V1_INSTRUCTIONS = """这是当轮已冻结的后台共享数据。逐一判断 analysis.sectors，向 submit 工具提交 decisions 数组，每个 sector_id 恰好一项。
 每项必填 sector_id、phase、evidence_refs。phase 为 NEW、MAINTAIN、STRENGTHEN、WEAKEN、RETREAT、UNKNOWN、NOT_COVERED、EVENT_ONLY。
 新 numeric_contract=scoped-facts-v1 时，每项另填 fact_refs：从该板块 fact_catalog 的键选择至多4项，有板块数字事实时至少引用一项本板块事实。catalog明确区分单板块、成分股、全部已采集板块和已采集A股；数字及口径由程序按引用渲染。
 evidence_refs 只能引用该板块 current.ref。没有 current 时用 NOT_COVERED 和空引用；有 current 时至少引用一个 current.ref。
@@ -34,6 +34,20 @@ previous 为已发布报告中的板块观测，独立于 prior_active；同日�
 新数字协议的 research.rationale 只写定性判断，当前涨跌、家数、比例等数值只通过 fact_refs 引用，不手抄数值；有来源的代码、日期和时间可原样引用。invalidation_condition 可以提出明确的未来假设阈值，不能写成已经发生的事实。即使没有深度research，也必须选择fact_refs，程序生成基础事实解释。数字事实不合约时仅该板块转待复核，原始判断保留。
 新 etf_selection_contract=explicit-etfs-v1 时，每项必填 etf_choices（至多3个ETF代码，可空），只从本板块 etf_options.products[].etf 选择。独立判断已有真实关联、暴露、行情和资料缺口是否支持选择，不按程序旧阈值机械选代表；缺必要资料可观察并留空。NEW是板块方向状态，ETF选择是独立结果。身份、交易规则、可卖份额和成交时点由程序逐项核验。
 不补写价格、权重或缺失事实，不调用其它行情来源或交易工具。完成提交后检查状态，只有 PUBLISHED 才反馈已保存，附报告编号和 QQ 状态；FAILED 原样反馈失败阶段与错误。"""
+
+# Keep existing texts for READY jobs created before the instructions were stored.
+# Changes to the prompt semantics must use a new prompt version.
+_PROMPT_INSTRUCTIONS = {
+    "scoped-facts-v1": _SCOPED_FACTS_V1_INSTRUCTIONS,
+    "etf-representativeness-v1": _SCOPED_FACTS_V1_INSTRUCTIONS + (
+        "\nETF观察项可在定性理由中引用，数值用 fact_refs。只选择 products 中的ETF，"
+        "同源支持及暴露档位仅为研判事实，不自动形成选择。"
+    ),
+}
+
+
+def _instructions(prompt_version):
+    return _PROMPT_INSTRUCTIONS.get(prompt_version, _PROMPT_INSTRUCTIONS["scoped-facts-v1"])
 
 
 def _decode(raw):
@@ -169,6 +183,7 @@ class NativeRounds:
         with self.ledger._connect() as conn:
             row = conn.execute('''SELECT j.trade_date,j.slot,j.state,j.expires_at,j.error_code,
                 CASE WHEN j.state='READY' THEN j.context->'analysis' ELSE NULL END,
+                j.context->>'instructions',
                 j.context->'request'->'etf_policy'->>'prompt_version',
                 t.state,t.report_id,t.error_code,j.expires_at<=clock_timestamp(),j.failure_stage
                 FROM native_round_attempts j LEFT JOIN round_tasks t
@@ -176,7 +191,8 @@ class NativeRounds:
                 WHERE j.ns=%s AND j.run_id=%s''', (self.ledger.ns,run_id)).fetchone()
             if row is None:
                 raise ValueError('native run not found')
-            day,slot,state,expires,error,context,prompt_version,round_state,report_id,round_error,expired,failure_stage = row
+            (day,slot,state,expires,error,context,instructions,prompt_version,
+             round_state,report_id,round_error,expired,failure_stage) = row
             if round_state == 'PUBLISHED' and state != 'FAILED':
                 state,error = 'PUBLISHED',None
             elif state in ACTIVE and (expired or round_state == 'FAILED'):
@@ -187,10 +203,7 @@ class NativeRounds:
             if state == 'FAILED':
                 result['stage'] = failure_stage
             if state == 'READY':
-                instructions = INSTRUCTIONS
-                if prompt_version == "etf-representativeness-v1":
-                    instructions += "\nETF观察项可在定性理由中引用，数值用 fact_refs。只选择 products 中的ETF，同源支持及暴露档位仅为研判事实，不自动形成选择。"
-                result.update(analysis=_decode(context),instructions=instructions)
+                result.update(analysis=_decode(context), instructions=instructions or _instructions(prompt_version))
             if state == 'PUBLISHED':
                 raw = conn.execute("SELECT payload FROM events WHERE ns=%s AND kind='report' AND id=%s",
                                    (self.ledger.ns,report_id)).fetchone()
@@ -388,7 +401,8 @@ def _prepare_context(queue, cache, args, client, job, now):
     if (request.get('etf_policy') or {}).get('policy_mode') == 'V3_ENFORCE':
         analysis = _bounded_native_analysis(analysis)
     return dict(calendar=days,mapping=mapping,market=market.body if market else None,
-                cutoff=cutoff.isoformat(),request=request,analysis=analysis)
+                cutoff=cutoff.isoformat(),request=request,analysis=analysis,
+                instructions=_instructions((request.get('etf_policy') or {}).get('prompt_version')))
 
 
 def native_tick(queue, cache, args, client, now=None):

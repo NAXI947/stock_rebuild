@@ -48,6 +48,33 @@ const row=(code="000001.SZ",score="80")=>({ts_code:code,name:code==="000001.SZ"?
 const info=(items=[row()])=>({items,available_dates:["2026-11-17"],selected_trade_date:"2026-11-17",family:"RIGHT",page:1,page_size:20,pages:1,total:items.length,summary:{total:items.length,valid_score_count:items.length,max_score:"80",valid_return_count:1,up_count:1,high_return_count:0},batch:{version_id:"right-v1",published_at:"2026-11-17T16:00:00+08:00"}});
 const days=["2026-11-10","2026-11-11","2026-11-12","2026-11-13","2026-11-16","2026-11-17"];
 
+test("ETF report renders the five saved counting dimensions and their selectable tiers",()=>{
+  const {context,calls,root}=harness(()=>{throw new Error("saved report must not recollect data");});
+  const fixtures=[
+    ["A",3,6,1,2,6,0], ["B",1,1,1,1,1,0], ["C",1,1,0,1,0,1],
+  ];
+  const log=process.env.ETF_ACCEPTANCE_LOG;
+  const saved=log && Object.fromEntries(Array.from(readFileSync(log,"utf8")
+    .matchAll(/T24_WORKBENCH ([ABC]) (\{[^\r\n]+\})/g),m=>[m[1],JSON.parse(m[2])]));
+  for (const [name,sectors,pairs,indexes,products,core,unknown] of fixtures) {
+    const statistics=saved ? saved[name] : {
+      sectors:{total:sectors,with_selectable:sectors},
+      pairs:{total:pairs,selectable:pairs,selectable_by_tier:{core,below_core:0,unknown}},
+      indexes:{total:1,weights_available:indexes}, products:{total:products,selectable:products},
+      orders:{total:1},
+    };
+    const report={raw:JSON.stringify({sectors:[]}),round_slot:"09:35",status:"PARTIAL",
+      input_meta:{representation:{statistics}}};
+    context.reportDetail(root,report,()=>{});
+    for (const text of ["可选板块"+sectors+"/"+sectors,"可选配对"+pairs+"/"+pairs,
+                       "有权重指数"+indexes+"/1","可选 ETF"+products+"/"+products,
+                       "本轮节点1","主干配对"+core,"低暴露配对0","未知暴露配对"+unknown]) {
+      assert.ok(root.textContent.includes(text),name+" "+text);
+    }
+  }
+  assert.equal(calls.length,0);
+});
+
 test("history keeps zero scores, breaks at missing days and version changes, and respects cutoff",()=>{
   const {context}=harness(()=>{});
   const data={trade_dates:[...days,"2026-11-18"],items:[

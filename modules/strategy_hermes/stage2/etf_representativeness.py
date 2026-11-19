@@ -90,6 +90,87 @@ def evaluate_pair_representativeness(frozen_sector_members, known_weights, *,
                 entry_allowed=associated and status not in REJECTIONS, reason_codes=reasons)
 
 
+def _fields(value, fields):
+    if not isinstance(value, dict) or value.keys() != fields.keys() or any(
+            not isinstance(value[key], allowed) or (allowed is int and type(value[key]) is not int)
+            for key, allowed in fields.items()):
+        raise ValueError("invalid ETF shadow fields")
+
+
+_PAIR_FIELDS = {
+    **dict.fromkeys(("matched_count", "positive_weight_matched_count"), (int, type(None))),
+    **dict.fromkeys(("known_exposure", "max_possible_exposure", "reverse_coverage", "source_time"), (str, type(None))),
+    **dict.fromkeys(("upper_bound_status", "exposure_basis", "exposure_tier", "representativeness_status",
+                     "sector_id", "etf", "index", "policy_mode", "policy_version", "parameter_digest",
+                     "mapping_version"), str),
+    **dict.fromkeys(("entry_allowed", "explicit_relation", "weight_available", "weight_complete"), bool),
+    "sector_member_count": int, "reason_codes": list, "fact_refs": list,
+}
+
+_STATISTIC_FIELDS = {
+    "sectors": dict.fromkeys(("total", "with_quotes", "with_members", "with_relations", "with_selectable",
+                              "effective_up", "with_ai_selection", "stripped_empty"), int),
+    "pairs": dict(total=int, explicit=int, with_intersection=int, unproven_upper_bound=int, by_status=dict,
+                  selectable=int, selectable_by_tier=dict),
+    "indexes": dict.fromkeys(("total", "weights_available", "partial", "missing_weights", "with_verified_product"), int),
+    "products": dict(total=int, selectable=int, ai_selected=int, rule_status=dict, execution_ready=int),
+    "orders": dict(total=int, by_action=dict, by_status=dict, by_block=dict),
+}
+
+_SUPPORT_FIELDS = {
+    **dict.fromkeys(("group_id", "index", "family_id", "etf", "taxonomy_version", "mapping_version",
+                     "phase_basis", "exposure_basis", "union_reference"), str),
+    **dict.fromkeys(("union_exposure", "report_id"), (str, type(None))),
+    **dict.fromkeys(("source_sector_ids", "source_fact_refs"), list),
+    **dict.fromkeys(("branch_count", "up_branch_count", "selected_up_branch_count"), int),
+    **dict.fromkeys(("direction_conflicts", "excluded_sources"), dict),
+}
+
+
+def _validate_pairs(pairs):
+    for sector, entries in pairs.items():
+        if not isinstance(entries, dict) or not isinstance(sector, str):
+            raise ValueError("invalid ETF shadow pair group")
+        for code, pair in entries.items():
+            _fields(pair, _PAIR_FIELDS)
+            if (pair["sector_id"] != sector or pair["etf"] != code
+                    or any(not isinstance(item, str) for item in pair["reason_codes"] + pair["fact_refs"])):
+                raise ValueError("invalid ETF shadow pair")
+
+
+def validate_shadow_fields(stage, result):
+    if stage == "PREPARE":
+        _validate_pairs(result)
+    elif stage == "RECOMMEND":
+        _fields(result, dict(policy=dict, pairs=dict, mapping=dict, recommendations=dict, quote_sectors=list))
+        recommendations = result["recommendations"]
+        _fields(recommendations, dict(method=str, automatic_method=str, mapping_version=str,
+                                     market_snapshot=(str, type(None)), sectors=dict,
+                                     mapping_scope=dict, candidates=list))
+        for row in recommendations["candidates"]:
+            _fields(row, dict(etf=str, sector_id=str, rank=int, mapping_ref=str))
+        _fields(recommendations["mapping_scope"], dict(sectors=int, products=int, indexes=int))
+    elif stage == "FINALIZE":
+        _fields(result, dict(policy=dict, pairs=dict, current_support=list, statistics=dict))
+        _validate_pairs(result["pairs"])
+        stats = result["statistics"]
+        _fields(stats, dict.fromkeys(_STATISTIC_FIELDS, dict))
+        for name, fields in _STATISTIC_FIELDS.items():
+            _fields(stats[name], fields)
+        _fields(stats["pairs"]["selectable_by_tier"], dict(core=int, below_core=int, unknown=int))
+        for group, name in (("pairs", "by_status"), ("products", "rule_status"),
+                            ("orders", "by_action"), ("orders", "by_status"), ("orders", "by_block")):
+            if any(not isinstance(key, str) or type(count) is not int
+                   for key, count in stats[group][name].items()):
+                raise ValueError("invalid ETF shadow counters")
+        for group in result["current_support"]:
+            _fields(group, _SUPPORT_FIELDS)
+            for source in group["source_fact_refs"]:
+                _fields(source, dict(sector_id=str, refs=list))
+    else:
+        raise ValueError("unknown ETF shadow stage")
+
+
 def shadow_result(stage, operation):
     """Run a shadow implementation on its caller-provided private input."""
     try:
@@ -97,6 +178,7 @@ def shadow_result(stage, operation):
         if not isinstance(result, dict):
             raise ValueError("invalid ETF shadow result")
         json.dumps(result, allow_nan=False)
+        validate_shadow_fields(stage, result)
     except Exception as exc:
         return None, dict(stage=stage, error=type(exc).__name__)
     return result, None

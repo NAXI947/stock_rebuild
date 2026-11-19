@@ -308,10 +308,12 @@ class PostgresLedger(Ledger):
                 from .etf_support_facts import finalize_support_facts
                 if etf_projection["policy"]["policy_mode"] == "V3_SHADOW":
                     from copy import deepcopy
+                    from .etf_representativeness import validate_shadow_fields
                     try:
                         with conn.transaction(savepoint_name="v3_shadow_sp"):
                             projected = finalize_support_facts(conn, self.ns, deepcopy(etf_projection),
                                 deepcopy(published), deepcopy(etf_projection["recommendations"]))
+                            validate_shadow_fields("FINALIZE", projected)
                             shadow = {(row["sector_id"], row["etf"])
                                       for row in etf_projection["recommendations"]["candidates"]}
                             actual = {(row["sector_id"], code) for code, rows in published["candidates"].items()

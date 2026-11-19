@@ -668,6 +668,17 @@ def visual_brief_sections(slot, report, orders, *, preview=False):
                 phase += " [" + "、".join(gaps) + "]"
         phases.append(phase)
     candidates, references, blocked = map(_visual_etfs, _etf_sections(report, ranked, names))
+    candidate_text = _visual_entries(candidates, "本轮无", 3, 160, " ｜ ")
+    statistics = (meta.get("representation") or {}).get("statistics")
+    if statistics:
+        sectors, pairs, indexes, products, nodes_count = (
+            statistics[key] for key in ("sectors", "pairs", "indexes", "products", "orders"))
+        tiers = pairs["selectable_by_tier"]
+        candidate_text += (
+            f"\n穿透统计　板块 {sectors['with_selectable']}/{sectors['total']} · "
+            f"配对 {pairs['selectable']}/{pairs['total']} · 指数 {indexes['weights_available']}/{indexes['total']} · "
+            f"ETF {products['selectable']}/{products['total']} · 本轮节点 {nodes_count['total']}\n"
+            f"可选配对　主干 {tiers['core']} · 低暴露 {tiers['below_core']} · 未知 {tiers['unknown']}")
     stock_groups = [f"{names[sid]} {_short_list(meta['stock_watchlist'][sid], '', 4)}"
                     for sid in ranked if sid in meta.get("stock_watchlist", {}) and states[sid]["state"] in ("UP", "HOLD")]
     scope = meta.get("market_scope")
@@ -706,7 +717,7 @@ def visual_brief_sections(slot, report, orders, *, preview=False):
         details.append("⋯ 其余详见完整回放" if preview else "⋯ 其余详见工作台报告")
     return dict(title=title, clock=clock, market=market, leaders=leaders,
                 boards=_visual_entries(phases, "暂无板块判断", 4, 220),
-                etf_candidates=_visual_entries(candidates, "本轮无", 3, 160, " ｜ "),
+                etf_candidates=candidate_text,
                 etf_watch=_visual_entries(references, "", 3, 160, " ｜ "),
                 etf_blocked=_blocked_text(blocked),
                 etf_gaps=" ｜ ".join(_etf_gaps(report, ranked, names)),

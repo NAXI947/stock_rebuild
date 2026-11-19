@@ -199,6 +199,22 @@ class NativeRoundIntegration(unittest.TestCase):
         report = self.store.report(result['report_id'])
         self.assertEqual(report['input_meta']['octop']['market_snapshot_id'],'native-frozen-market')
 
+    def test_ready_instructions_use_snapshot_or_legacy_version(self):
+        with patch.dict(os.environ, ETF_REPRESENTATIVENESS_MODE="V3_ENFORCE"):
+            ready = self.prepare()
+        self.assertIn("ETF观察项", ready["instructions"])
+        run_id = ready["run_id"]
+        restarted = NativeRounds(self.store, self.calendar)
+        with patch.dict("modules.strategy_hermes.stage2.native_rounds._PROMPT_INSTRUCTIONS",
+                        {"etf-representativeness-v1": "changed after prepare"}):
+            self.assertEqual(restarted.status(run_id)["instructions"], ready["instructions"])
+        with self.store._connect() as conn:
+            conn.execute("UPDATE native_round_jobs SET context=context-'instructions' WHERE ns=%s AND run_id=%s",
+                         (self.ns, run_id))
+        with patch("modules.strategy_hermes.stage2.native_rounds.INSTRUCTIONS", "new global prompt", create=True), \
+             patch.dict(os.environ, ETF_REPRESENTATIVENESS_MODE="V2"):
+            self.assertEqual(restarted.status(run_id)["instructions"], ready["instructions"])
+
     def test_recovery_after_publication_commit_does_not_publish_twice(self):
         ready = self.prepare()
         self.queue.submit(ready['run_id'],self.decisions(ready))

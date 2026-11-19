@@ -263,6 +263,17 @@ function recommendationStatus(value, directionFirst=false) {
   if (directionFirst) return ({CONFIRMED:"AI已选·执行就绪",PENDING:"AI已选·执行资料待补",OBSERVE:"关联观察",REJECTED:"执行受限"})[value] || "待核验";
   return ({CONFIRMED:"动向已确认",STATIC_ONLY:"仅静态匹配",PENDING:"待核验",REJECTED:"静态未通过"})[value] || "待核验";
 }
+function etfCoverageRows(statistics) {
+  const {sectors,pairs,indexes,products,orders}=statistics;
+  const tiers=pairs.selectable_by_tier;
+  return [
+    ["可选板块",sectors.with_selectable+"/"+sectors.total],
+    ["可选配对",pairs.selectable+"/"+pairs.total],
+    ["有权重指数",indexes.weights_available+"/"+indexes.total],
+    ["可选 ETF",products.selectable+"/"+products.total],
+    ["本轮节点",orders.total],["主干配对",tiers.core],["低暴露配对",tiers.below_core],["未知暴露配对",tiers.unknown],
+  ];
+}
 function reportDetail(panel,row,refreshReport) {
   const data=JSON.parse(row.raw);
   const recovery=row.input_meta?.manual_recovery;
@@ -276,6 +287,8 @@ function reportDetail(panel,row,refreshReport) {
     panel.append(metrics([["板块",scope.board_count],["上涨",counts.up],["下跌",counts.down],
       ["ETF 报价",scope.etf_count],["已映射板块",scope.mapped_count],["策略研判板块",scope.analyzed_count]]));
   }
+  const etfStatistics=row.input_meta?.representation?.statistics;
+  if (etfStatistics) panel.append(metrics(etfCoverageRows(etfStatistics)));
   const names = Object.fromEntries((data.sectors || []).map(s=>["kaipanla:"+s.kaipanla_plate_id,s.sector_name]));
   const phaseLabels = {NEW:"新增",MAINTAIN:"维持",STRENGTHEN:"加强",WEAKEN:"减弱",RETREAT:"退潮",UNKNOWN:"待核实"};
   panel.append(table(["板块","轮动判断","证据"],(data.sectors||[]).map(s=>{

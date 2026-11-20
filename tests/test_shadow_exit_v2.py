@@ -15,10 +15,10 @@ def report(day, hour, state):
     return dict(id=f"r{day}-{hour}", at=f"{DAYS[day]}T{hour}:00+08:00", sectors={SECTOR: dict(state=state)})
 
 
-def quote(day, hour, price, code=ETF):
+def quote(day, hour, price, code=ETF, *, tradeable=True, revision=0):
     at = f"{DAYS[day]}T{hour}:00+08:00"
-    return dict(id=f"q{day}-{hour}-{code}", etf=code, observed_at=at, received_at=at, price_cny=price,
-                source="frozen:test", tradeable=True, revision=0)
+    return dict(id=f"q{day}-{hour}-{code}-{revision}", etf=code, observed_at=at, received_at=at, price_cny=price,
+                source="frozen:test", tradeable=tradeable, revision=revision)
 
 
 class ShadowReplay(TestCase):
@@ -59,6 +59,25 @@ class ShadowReplay(TestCase):
             cycles=1, filled_exit_reasons=dict(TARGET_PROFIT_REDUCE=1, BREAKEVEN_PROTECT=1), fallback_flags={},
             average_fill_vs_trigger_pct="-0.0021", average_held_days_closed="2",
             average_return_pct_difference="6.3500"))
+
+    def test_corrections_untradeable_quotes_and_holding_days_follow_the_ledger(self):
+        events = [("report", report(0, "09:35", "UP")), ("quote", quote(0, "09:36", "1.000")),
+                  ("quote", quote(1, "09:35", "1.000")),
+                  # A higher revision of the same observation carries the stop-loss price.
+                  ("quote", quote(1, "09:35", "0.960", revision=1)),
+                  ("quote", quote(1, "09:35", "1.200", revision=0)),
+                  ("quote", quote(2, "09:35", "0.955")),
+                  ("quote", quote(3, "09:35", "0.500", tradeable=False))]
+        actual = self.recorded(events[:3])
+        result = compare([actual], events, CALENDAR, Rules.v2("DUAL"),
+                         lambda code, at, rules: dict(market_regime="RANGE_ROTATION", flags=[], atr20="0.025"))
+        row, = result["cycles"]
+        self.assertEqual([(order["reason"], order["trigger_price"], order["fill_price"])
+                          for order in row["shadow"]["orders"][1:]], [("STOP_LOSS_HIT", "0.960", "0.955")])
+        # The untradeable 0.500 is not a valuation price, and the exit filled two sessions after the buy.
+        self.assertEqual((row["valued_at"], row["recorded"]["return_pct"]),
+                         (events[5][1]["observed_at"], "-4.5000"))
+        self.assertEqual(result["summary"]["average_held_days_closed"], "2")
 
     def test_missing_inputs_are_counted_and_unfilled_or_incomplete_cycles_are_reported(self):
         events = [("report", report(0, "09:35", "UP")), ("quote", quote(0, "09:36", "1.000")),

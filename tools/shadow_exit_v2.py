@@ -46,16 +46,22 @@ def replay_cycle(actual, events, calendar, rules, inputs):
     process_quote(cycle, bought, calendar, lambda at, frozen: inputs(actual["etf"], at, frozen))
     if cycle["status"] != "OPEN":
         return None
-    seen, last = bought["observed_at"], bought
+    seen, last = (bought["observed_at"], bought["revision"]), bought
     start = events.index(("quote", bought)) + 1
     for kind, event in events[start:]:
         active = cycle["status"] in ("OPEN", "WAIT_EXIT")
         if kind == "report":
             if active:
                 apply_report(cycle, event)
-        elif event["etf"] == actual["etf"] and event["observed_at"] > seen and calendar.legal(moment(event["observed_at"])):
-            # Both sides are valued at the newest quote, also after the simulated cycle has closed.
-            seen, last = event["observed_at"], event
+        elif event["etf"] == actual["etf"] and calendar.legal(moment(event["observed_at"])):
+            # Same acceptance as the ledger: a later observation, or a higher revision of the same one.
+            mark = (event["observed_at"], event["revision"])
+            if mark <= seen:
+                continue
+            seen = mark
+            if event["tradeable"]:
+                # Both sides are valued at the newest tradeable quote, also after the simulated cycle closed.
+                last = event
             if active:
                 process_quote(cycle, event, calendar)
     return cycle, last
@@ -82,8 +88,9 @@ def compare(cycles, events, calendar, rules, inputs):
                         gaps.append(Decimal(order["fill_price"]) / Decimal(order["trigger_price"]) - 1)
             before, after = _return(actual, last["price_cny"]), _return(shadow, last["price_cny"])
             difference = None if before is None or after is None else str(Decimal(after) - Decimal(before))
-        if shadow["status"] == "CLOSED" and shadow.get("last_quote"):
-            held.append(shadow["last_quote"]["held_days"])
+        if shadow["status"] == "CLOSED":
+            bought, closed = (moment(shadow["book"]["fills"][0]["filled_at"]).date(), moment(shadow["closed_at"]).date())
+            held.append(sum(bought < day <= closed for day in calendar.days))
         rows.append(dict(
             etf=actual["etf"], bought_at=actual["book"]["fills"][0]["filled_at"], valued_at=last["observed_at"],
             recorded=dict(rule=actual["rule"]["version"], status=actual["status"], return_pct=before, orders=_orders(actual)),

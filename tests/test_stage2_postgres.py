@@ -410,6 +410,27 @@ class StageTwo(unittest.TestCase):
         self.assertEqual(json.loads(rows[0][4])["http_status"],200)
         self.assertEqual(rows[1][:4],("report:qq-weak","FAILED",1,"DeliveryUncertain"))
 
+    def test_v2_exit_raised_and_filled_between_rounds_reaches_the_next_qq_brief(self):
+        self.store.settings=replace(self.settings,evaluation_rule="hermes_signal_cycle_v2",regime_mode="DUAL")
+        self.publish("v2-entry",D1,"09:35","新增",self.market(D1,"09:34","10"))
+        self.quotes(D1,"09:36","10",1)
+        self.quotes(D2,"09:36","9.60",2)
+        cycle,=self.store.inspect()["cycles"]
+        self.assertEqual((cycle["rule"]["version"],cycle["status"],cycle["orders"][-1]["trigger_reason"],
+                          cycle["exit_plan"]["flags"]),
+                         ("hermes_signal_cycle_v2","WAIT_EXIT","STOP_LOSS_HIT",["REGIME_FALLBACK_RANGE","ATR_UNAVAILABLE"]))
+        self.quotes(D2,"09:40","9.55",3)
+        self.publish("v2-next",D2,"10:35","维持",None)
+        with self.store._connect() as conn:
+            payload,=conn.execute("SELECT payload FROM outbox WHERE ns=%s AND target='octop' AND event_key=%s",
+                                  (self.ns,"report:v2-next")).fetchone()
+        self.assertIn("510001.SH 止损清1000份 触发价9.60 [已成交]（报价触发）",json.loads(payload)["sections"]["simulation"])
+        self.publish("v2-later",D2,"13:05","维持",None)
+        with self.store._connect() as conn:
+            payload,=conn.execute("SELECT payload FROM outbox WHERE ns=%s AND target='octop' AND event_key=%s",
+                                  (self.ns,"report:v2-later")).fetchone()
+        self.assertEqual(json.loads(payload)["sections"]["simulation"],"无待执行")
+
     def test_qq_enqueues_a_report_without_trade_nodes(self):
         self.publish("qq-no-nodes",D1,"09:35","维持",None)
         with self.store._connect() as conn:

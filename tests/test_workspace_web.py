@@ -138,7 +138,7 @@ class WorkspaceWebTest(unittest.TestCase):
              patch("modules.strategy_hermes.stage2.market_turnover.get_json", side_effect=AssertionError("no GET collection")):
             status, raw = self.request("GET", API + "/market-panorama")
         self.assertEqual(status, 200)
-        self.assertEqual(set(json.loads(raw)), {"background", "turnover", "global_indices"})
+        self.assertEqual(set(json.loads(raw)), {"background", "regime", "turnover", "global_indices"})
         self.assertEqual(self.request("GET", API + "/sector-etf-info", auth=False)[0], 401)
         with patch("modules.strategy_hermes.stage2.market_bootstrap.fetch", side_effect=AssertionError("no GET collection")), \
              patch("modules.strategy_hermes.stage2.market_turnover.get_json", side_effect=AssertionError("no GET collection")):

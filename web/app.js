@@ -20,6 +20,11 @@ const statuses = {PARTIAL:"局部证据",READY:"就绪",UNAVAILABLE:"数据待�
   RULE_REVIEW_REQUIRED:"产品规则待复核，暂停新入场",SETTLEMENT_RULE_CONFLICT:"结算规则冲突待核验",
   ENTRY_ADMISSION_UNAVAILABLE:"准入资料读取失败，暂停新买",ENTRY_REFERENCE_UNPUBLISHED:"正式准入资料未发布",
   PRODUCT_RULE_UNVERIFIED:"交易规则待核验",TRADE_UNIT_CHANGED:"交易单位与冻结规则冲突"};
+const regimes = {BULL_OFFENSE:["强势进攻","bull"],RANGE_ROTATION:["震荡轮动","range"],BEAR_DEFENSE:["弱势防御","bear"]};
+const exitReasons = {STOP_LOSS_HIT:"成本止损",BREAKEVEN_PROTECT:"余仓保本",TRAILING_TAKE_PROFIT:"移动止盈",
+  TIME_EXIT_STAGNANT:"滞涨到期",TIME_EXIT_MAX_DAYS:"持有到期",TARGET_PROFIT_REDUCE:"目标止盈减半",AI_RETREAT:"明确退潮",
+  AI_WEAK_CROSS_DAY_2:"跨日第2次转弱",BEAR_EARLY_WEAK_EXIT:"弱势档早衰",AI_FIRST_WEAK_REDUCE:"首次转弱减半"};
+const exitFlags = {ATR_UNAVAILABLE:"ATR20 缺失，各线取下限",REGIME_FALLBACK_RANGE:"大盘数据不足，按震荡档"};
 const roundStates = {RUNNING:"研判中",PUBLISHED:"报告已保存",FAILED:"轮次失败",MISSING:"未发布"};
 const deliveryStates = {SENT:"已接收",NOT_QUEUED:"无投递记录",PENDING:"待投递",SENDING:"投递处理中",FAILED:"投递失败"};
 const qqFormatStates = {
@@ -489,6 +494,52 @@ function renderMarketBackground(data) {
   section.append(definition,panoramaSource(data));
   return section;
 }
+function renderMarketRegime(data) {
+  const names=(data?.indexes || []).map(item=>item.name).join(" + ");
+  const {section,heading}=panoramaSection("大盘三档",(names || "指数日K线")+" · 近5个交易日收盘判定");
+  const days=Array.isArray(data?.days)?data.days:[];
+  if (!days.length) {
+    section.append(empty("暂无已保存的指数日K线，收盘后采集到数据即显示"),panoramaSource(data,true));
+    return section;
+  }
+  const latest=days[days.length-1],[latestName,latestTone]=regimes[latest.market_regime] || ["数据不足","missing"];
+  const badge=elt("span",undefined,"panorama-badge");
+  badge.append(elt("span",latest.trade_date+" 收盘"),elt("b",latestName,"regime-text-"+latestTone));heading.append(badge);
+  const levels=["BULL_OFFENSE","RANGE_ROTATION","BEAR_DEFENSE"],left=74,width=500,step=(width-left)/days.length,rowHeight=38;
+  const x=index=>left+step*(index+.5),y=regime=>rowHeight*(levels.indexOf(regime)+.5);
+  const summary=days.map(day=>day.trade_date.slice(5)+" "+(regimes[day.market_regime]?.[0] || "数据不足")).join("，");
+  const svg=panoramaSvg("svg",{viewBox:"0 0 "+width+" "+rowHeight*3,role:"img","aria-label":"近5个交易日大盘档位："+summary,class:"regime-chart"});
+  for (const [index,level] of levels.entries()) {
+    svg.append(panoramaSvg("rect",{x:left,y:rowHeight*index+2,width:width-left,height:rowHeight-4,rx:4,class:"regime-band regime-band-"+regimes[level][1]}));
+    const label=panoramaSvg("text",{x:left-10,y:rowHeight*(index+.5)+4,"text-anchor":"end",class:"regime-level"});label.textContent=regimes[level][0];svg.append(label);
+  }
+  // Only consecutive judged sessions are joined; a gap stays visible as a gap.
+  for (let index=1;index<days.length;index++) {
+    const [before,after]=[days[index-1],days[index]];
+    if (regimes[before.market_regime] && regimes[after.market_regime])
+      svg.append(panoramaSvg("line",{x1:x(index-1),y1:y(before.market_regime),x2:x(index),y2:y(after.market_regime),class:"regime-line"}));
+  }
+  for (const [index,day] of days.entries()) {
+    if (regimes[day.market_regime]) svg.append(panoramaSvg("circle",{cx:x(index),cy:y(day.market_regime),r:8,class:"regime-dot regime-dot-"+regimes[day.market_regime][1]}));
+    else {
+      const gap=panoramaSvg("text",{x:x(index),y:rowHeight*1.5+4,"text-anchor":"middle",class:"regime-gap"});gap.textContent="数据不足";svg.append(gap);
+    }
+  }
+  const strip=elt("div",undefined,"regime-days");strip.style.setProperty("--regime-days",String(days.length));
+  for (const day of days) {
+    const [name,tone]=regimes[day.market_regime] || ["数据不足","missing"],cell=elt("div",undefined,"regime-day");
+    cell.append(elt("span",day.trade_date.slice(5),"numeric muted"),elt("strong",name,"regime-text-"+tone),
+      elt("small","量能比 "+(day.volume_ratio==null?"—":Number(day.volume_ratio).toFixed(2)),"numeric muted"));
+    for (const item of day.indexes || []) {
+      const position=item.above_ma20==null?"待补":(item.above_ma20?"站上":"低于")+"MA20 · 均线"+(item.ma20_rising?"向上":"未向上");
+      cell.append(elt("small",item.name+" "+position,"muted"));
+    }
+    strip.append(cell);
+  }
+  const chart=elt("div",undefined,"regime-figure");chart.append(svg,strip);
+  section.append(chart,elt("p","每个交易日收盘后判定一次，用于下一交易日买入成交的 v2 周期；量能比为近5日均额除以近20日均额。数据不足的交易日不判档。","panorama-note"),panoramaSource(data,true));
+  return section;
+}
 function renderMarketTurnover(data) {
   const {section,heading}=panoramaSection("市场成交",(data?.scope || "沪深A股")+" · 近5个交易日");
   if (data?.trade_date) heading.append(elt("span",data.trade_date+" · 北京时间","panorama-badge numeric"));
@@ -584,10 +635,10 @@ async function renderMarket() {
   const reload=button("读取中…",renderMarket,"primary");reload.disabled=true;
   const head=title("大盘全景","市场广度、成交比较与全球指数",reload),body=elt("div",undefined,"panorama");
   const notice=elt("p","","panorama-notice");notice.hidden=true;notice.setAttribute("role","status");
-  const draw=data=>body.replaceChildren(renderMarketBackground(data?.background),renderMarketTurnover(data?.turnover),renderGlobalIndices(data?.global_indices));
+  const draw=data=>body.replaceChildren(renderMarketBackground(data?.background),renderMarketRegime(data?.regime),renderMarketTurnover(data?.turnover),renderGlobalIndices(data?.global_indices));
   const saved=panoramaUI.token===token?panoramaUI.data:null;
   if(saved)draw(saved);
-  else for(const name of ["市场背景","市场成交","全球指数"]){
+  else for(const name of ["市场背景","大盘三档","市场成交","全球指数"]){
     const {section}=panoramaSection(name);section.append(elt("div","正在读取已保存行情…","panorama-loading"));body.append(section);
   }
   body.setAttribute("aria-busy","true");screen.replaceChildren(head,notice,body);
@@ -1207,13 +1258,29 @@ function renderAutomaticBacktests(screen,view) {
       }),
     ];
   }),"暂无自动周期"));
+  const ratio=value=>value==null ? null : pct(value,100);
+  const exits=card("退出计划");
+  exits.append(elt("p","v2 周期在买入成交时按大盘档位和 ETF 的 ATR20 冻结各条线；浮盈与峰值只取轮次采样报价。v1 周期没有价格和时间退出。","muted"));
+  exits.append(table(["ETF","规则版本","大盘档位","ATR20","止损线","移动止盈（启动 / 回撤）","目标止盈减半","采样浮盈","采样峰值","余仓保本","持有日 / 上限","标注"],
+    cycles.filter(cycle=>cycle.book.fills.length).map(cycle=>{
+      const plan=cycle.exit_plan,seen=cycle.exit_view;
+      if (!plan) return [cycle.etf,cycle.rule.version,"—","—","—","—","—","—","—","—","—","无价格退出"];
+      return [cycle.etf,cycle.rule.version,regimes[plan.market_regime]?.[0] || plan.market_regime,ratio(plan.atr20),
+        "-"+ratio(plan.stop_loss),ratio(plan.trail_start)+" / "+ratio(plan.trail_drawdown),ratio(plan.target_reduce),
+        ratio(seen?.return_ratio),ratio(seen?.peak_return_ratio),
+        seen?.breakeven_armed ? (seen.remainder?"已武装 · 余仓生效":"已武装 · 待减仓") : "未武装",
+        seen?.held_days==null ? "— / T+"+plan.max_days : "T+"+seen.held_days+" / T+"+plan.max_days,
+        plan.flags.map(flag=>exitFlags[flag] || flag).join("；") || null];
+    }),"暂无已成交的自动周期"));
+  const fillPrices=cycle=>Object.fromEntries(cycle.book.fills.map(fill=>[fill.order_id,fill.price]));
   const rows=cycles.flatMap(cycle=>cycle.orders.map(order=>[
     cycle.etf,actions[order.action],time(order.requested_at),order.theoretical,order.target,order.remaining,
     order.action==="REDUCE" && Number(order.theoretical)>0 ? pct(Number(order.target)*Number(cycle.rule.reduce_ratio)/Number(order.theoretical),100) : null,
-    statusName(order.status),
+    statusName(order.status),order.trigger_reason ? exitReasons[order.trigger_reason] || order.trigger_reason : null,
+    order.trigger_price,fillPrices(cycle)[order.id],
   ]));
   const orders=card("自动节点");
-  orders.append(table(["ETF","动作","节点时间","理论份额","取整后目标","剩余份额","取整后减仓比例","状态"],rows,"暂无自动节点"));
+  orders.append(table(["ETF","动作","节点时间","理论份额","取整后目标","剩余份额","取整后减仓比例","状态","触发原因","触发价","成交价"],rows,"暂无自动节点"));
   const execution=card("自动成交与 T+1 批次");
   execution.append(table(["ETF","动作","成交时间","参考价","成交价","成交份额"],cycles.flatMap(c=>c.book.fills.map(f=>[
     c.etf,actions[f.action],time(f.filled_at),f.raw_price,f.price,f.quantity,
@@ -1222,7 +1289,7 @@ function renderAutomaticBacktests(screen,view) {
     c.etf,l.bought_on,l.sellable_from,l.remaining,
   ])),"暂无持仓批次"));
   const historyDetail=card("历史周期详情");historyDetail.hidden=true;
-  screen.append(summary,auto,orders,execution,archiveSearch("cycles",async id=>{
+  screen.append(summary,auto,exits,orders,execution,archiveSearch("cycles",async id=>{
     const c=await api(apiRoot+"/cycle?id="+encodeURIComponent(id));
     historyDetail.hidden=false;
     historyDetail.replaceChildren(elt("h2",c.etf+" · "+statusName(c.status)),

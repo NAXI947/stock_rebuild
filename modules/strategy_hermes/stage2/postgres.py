@@ -367,12 +367,17 @@ class PostgresLedger(Ledger):
                     from ..qq_templates import MESSAGE_FORMAT
                     from .notifications import visual_brief_sections
                     orders = conn.execute(
+                        # Exits raised by a quote since the previous report are listed even when already filled.
                         """SELECT c.etf,o.action,o.remaining_quantity,o.status,o.evidence->>'eligible_at',
-                                  (o.evidence->>'report_id'=%s) AS is_new,o.evidence->>'last_block'
+                                  (o.evidence->>'report_id'=%s) AS is_new,o.evidence->>'last_block',
+                                  o.evidence->>'trigger_reason',o.evidence->>'trigger_price',o.target_quantity
                            FROM simulation_orders o JOIN cycles c ON (c.ns,c.id)=(o.ns,o.cycle_id)
-                           WHERE o.ns=%s AND (o.status='PENDING' OR o.evidence->>'report_id'=%s)
-                           ORDER BY is_new DESC,o.requested_at DESC,c.etf,o.action""",
-                        (published["id"],self.ns,published["id"])).fetchall()
+                           WHERE o.ns=%s AND (o.status='PENDING' OR o.evidence->>'report_id'=%s
+                               OR (o.evidence->'evidence'->>'quote_id' IS NOT NULL AND o.requested_at > COALESCE(
+                                   (SELECT max(at)::timestamptz FROM events
+                                    WHERE ns=%s AND kind='report' AND id<>%s), '-infinity')))
+                           ORDER BY is_new DESC NULLS LAST,o.requested_at DESC,c.etf,o.action""",
+                        (published["id"],self.ns,published["id"],self.ns,published["id"])).fetchall()
                     target_payload = {**payload, "format":MESSAGE_FORMAT, "template_kind":"research",
                                       "sections":visual_brief_sections(claim.slot,published,orders)}
                 conn.execute(

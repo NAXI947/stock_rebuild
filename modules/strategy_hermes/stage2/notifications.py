@@ -12,6 +12,27 @@ from .penetration import number
 from .stock_research import for_sector
 
 ACTIONS = {"BUY": "买入节点", "REDUCE": "首次转弱减仓", "EXIT": "退潮清仓"}
+# v2 orders say why they were raised; the first six come from a quote, not from a report.
+EXIT_LABELS = {"STOP_LOSS_HIT": "止损清", "BREAKEVEN_PROTECT": "保本清", "TRAILING_TAKE_PROFIT": "移动止盈清",
+               "TIME_EXIT_STAGNANT": "滞涨到期清", "TIME_EXIT_MAX_DAYS": "持有到期清",
+               "TARGET_PROFIT_REDUCE": "目标止盈减", "AI_RETREAT": "退潮清", "AI_WEAK_CROSS_DAY_2": "跨日转弱清",
+               "BEAR_EARLY_WEAK_EXIT": "弱势早衰清", "AI_FIRST_WEAK_REDUCE": "转弱减"}
+QUOTE_REASONS = tuple(EXIT_LABELS)[:6]
+
+
+def _node(order, labels):
+    """Shared wording of one simulated node: text, and whether a quote raised it."""
+    code, action, quantity, status = order[:4]
+    reason, trigger, target = (*order[7:10], None, None, None)[:3]
+    by_quote = reason in QUOTE_REASONS
+    if status == "FILLED" and target is not None:
+        quantity = target
+    text = f"{code} " + EXIT_LABELS.get(reason, labels[action])
+    if quantity is not None:
+        text += f"{quantity}份"
+    if by_quote and trigger:
+        text += f" 触发价{trigger}"
+    return text, by_quote
 QQ_LIMIT = 1500
 QQ_RESEARCH_SECTORS = 3
 QQ_FORMAT = "octop-markdown-v1"
@@ -432,14 +453,21 @@ def brief_sections(slot, report, orders, *, preview=False):
     node_lines = []
     for order in orders:
         code, action, quantity, status, eligible, is_new = order[:6]
-        text = f"{code} {ACTIONS[action]}"
-        if quantity is not None:
-            text += f" {quantity} 份"
+        if len(order) > 7 and order[7]:
+            text, by_quote = _node(order, ACTIONS)
+        else:
+            text, by_quote = f"{code} {ACTIONS[action]}", False
+            if quantity is not None:
+                text += f" {quantity} 份"
         if status == "BELOW_TRADING_UNIT":
             text += "，低于交易单位"
         elif status == "PENDING":
             text += "，" + _pending_label(action, eligible, at, order[6] if len(order) > 6 else None).replace("待T+1", "待 T+1")
-        if not is_new:
+        elif status == "FILLED" and by_quote:
+            text += "，已成交"
+        if by_quote:
+            text += "（报价触发）"
+        elif not is_new:
             text += "（前轮）"
         node_lines.append(text)
 
@@ -700,15 +728,17 @@ def visual_brief_sections(slot, report, orders, *, preview=False):
     nodes = []
     for order in orders:
         code, action, quantity, status, eligible, is_new = order[:6]
-        line = f"{code} " + {"BUY": "买入", "REDUCE": "转弱减", "EXIT": "退潮清"}[action]
-        if quantity is not None:
-            line += f"{quantity}份"
+        line, by_quote = _node(order, {"BUY": "买入", "REDUCE": "转弱减", "EXIT": "退潮清"})
         if status == "BELOW_TRADING_UNIT":
             line += " [低于最小单位]"
         elif status == "PENDING":
             pending = _pending_label(action, eligible, at, order[6] if len(order) > 6 else None)
             line += f" [{pending}]"
-        if not is_new:
+        elif status == "FILLED" and by_quote:
+            line += " [已成交]"
+        if by_quote:
+            line += "（报价触发）"
+        elif not is_new:
             line += "（前轮）"
         nodes.append(line)
     market, leaders = _visual_market(scope)

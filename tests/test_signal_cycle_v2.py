@@ -7,8 +7,8 @@ from tempfile import TemporaryDirectory
 from unittest import TestCase, skipUnless
 
 from modules.strategy_hermes.ledger import Ledger, encode
-from modules.strategy_hermes.signal_cycle import apply_report, create_cycle, pending, process_quote
-from modules.strategy_hermes.simulator import Calendar, Rules, shares
+from modules.strategy_hermes.signal_cycle import apply_report, create_cycle, pending, process_quote, view
+from modules.strategy_hermes.simulator import Calendar, Rules, moment, shares
 
 DAYS = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06",
         "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13"]
@@ -102,6 +102,20 @@ class ExitPlan(TestCase):
         # T05: only quotes sampled after the fill move the peak.
         feed(cycle, (0, "13:05", "1.030"), (0, "14:05", "1.025"))
         self.assertEqual((cycle["peak_price"], trail(cycle)), ("1.030", []))
+
+
+class ExitView(TestCase):
+    def test_view_reports_sampled_return_peak_days_and_breakeven_state(self):
+        cycle = opened(RANGE, "0.055")
+        now = moment(stamp(1, "14:30"))
+        self.assertEqual(view(cycle, None, now)["exit_view"], dict(
+            return_ratio=None, peak_return_ratio="0.000000", sampled_at=None, held_days=None, max_days=5,
+            breakeven_armed=False, remainder=False))
+        feed(cycle, (1, "10:35", "1.016"), (1, "10:36", "WEAK"), (1, "13:05", "1.010"))
+        self.assertEqual(view(cycle, None, now)["exit_view"], dict(
+            return_ratio="0.010000", peak_return_ratio="0.016000", sampled_at=stamp(1, "13:05"), held_days=1,
+            max_days=5, breakeven_armed=True, remainder=True))
+        self.assertNotIn("exit_view", view(opened(rules=Rules()), None, now))
 
 
 class PriceExits(TestCase):

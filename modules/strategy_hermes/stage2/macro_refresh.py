@@ -39,12 +39,13 @@ class MacroRefresh:
         self.parts={}
         self.index_day={}
         self.index_stored=set()
+        self.index_retry={}
 
-    def _index_due(self, stamp):
+    def _index_due(self, stamp, now):
         """One index per tick: once after each weekday close, or at once when none is stored."""
         today=stamp.date().isoformat()
         for code in COLLECTED:
-            if self.index_day.get(code)==today:
+            if self.index_day.get(code)==today or now<self.index_retry.get(code,0):
                 continue
             if stamp.weekday()<5 and stamp.time()>=INDEX_READY:
                 return code
@@ -66,7 +67,7 @@ class MacroRefresh:
             if endpoint!="107":
                 break
             try:
-                index=self._index_due(stamp)
+                index=self._index_due(stamp,now)
             except psycopg.Error:
                 index=None
             if index:
@@ -97,11 +98,17 @@ class MacroRefresh:
             source="kaipanla:"+endpoint+(":"+index if index else "")
             self.parts[endpoint]=log.call(source,dict(endpoint=endpoint),collect,limit=1)
             if index:
-                self.index_day[index]=stamp.date().isoformat()
+                # A fetch before the close only seeds history; the closing bar is still due today.
+                if stamp.weekday()<5 and stamp.time()>=INDEX_READY:
+                    self.index_day[index]=stamp.date().isoformat()
                 self.index_stored.add(index)
                 self.due[endpoint]=now+60
         except (OSError,ValueError,KeyError,TypeError,ArithmeticError,ProbeError,ProviderHTTPError,psycopg.Error) as exc:
             self.parts[endpoint]=dict(state="FAILED",error=type(exc).__name__)
+            if index:
+                # One failing index waits for its next slot without holding back the others.
+                self.index_retry[index]=now+900
+                self.due[endpoint]=now+60
             LOG.warning("%s refresh failed: %s",endpoint,type(exc).__name__)
         self.status=dict(self.parts[endpoint],endpoint=endpoint,parts=dict(self.parts))
         return self.status

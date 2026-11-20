@@ -160,6 +160,13 @@ class IndexCollection(TestCase):
     def test_first_start_fetches_history_at_once_and_failures_wait_for_the_next_slot(self):
         refresher = self.refresher()
         morning = datetime(2026, 11, 20, 9, 0, tzinfo=CHINA)
-        calls, states = self.run_ticks(refresher, morning, [0, 60, 899, 900], fail={"SH000300"})
-        self.assertEqual(calls, ["SH000300", "SH000300"])
+        calls, states = self.run_ticks(refresher, morning, [0, 60, 120, 180, 900], fail={"SH000300"})
+        self.assertEqual(calls, ["SH000300", "SH000852", "SH000001", "SH000300"])
         self.assertEqual(states[0]["state"], "FAILED")
+
+    def test_morning_seed_does_not_replace_the_closing_fetch(self):
+        refresher = self.refresher()
+        morning = datetime(2026, 11, 20, 9, 0, tzinfo=CHINA)
+        self.assertEqual(self.run_ticks(refresher, morning, [0, 60, 120, 180, 2000])[0], list(regime.COLLECTED))
+        after = datetime(2026, 11, 20, 15, 6, tzinfo=CHINA)
+        self.assertEqual(self.run_ticks(refresher, after, [3000, 3060, 3120, 3180])[0], list(regime.COLLECTED))

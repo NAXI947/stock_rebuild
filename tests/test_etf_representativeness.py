@@ -19,6 +19,29 @@ class PairTests(unittest.TestCase):
             {"a", "b", *(str(i) for i in range(8))}, weights, sector_members_complete=True,
             weights_complete_and_valid=complete, partial_upper_bound_proven=proof, explicit_relation=relation)
 
+    def broad(self, size, **kwargs):
+        members = {f"s{i}" for i in range(size)}
+        weights = {"s0": Decimal(".4"), "s1": Decimal(".3"), "outside": Decimal(".3")}
+        return evaluate_pair_representativeness(members, weights, sector_members_complete=True,
+                                                weights_complete_and_valid=True, **kwargs)
+
+    def test_broad_sector_needs_reviewed_attribution_for_entry(self):
+        # Overlap alone is 70% here, exactly like an unrelated index inside a thousand-member concept sector.
+        for size, kwargs, allowed in ((299, {}, True), (300, {}, False), (1026, {}, False),
+                                      (1026, dict(attributed=True), True),
+                                      (1026, dict(explicit_relation=True), True)):
+            with self.subTest(size=size, **kwargs):
+                result = self.broad(size, **kwargs)
+                self.assertEqual(result["known_exposure"], "0.7")
+                self.assertEqual(result["entry_allowed"], allowed)
+                self.assertEqual(result["representativeness_status"],
+                                 "RELEVANCE_NOT_REJECTED" if allowed else "BROAD_SECTOR_UNATTRIBUTED")
+
+    def test_policy_frozen_before_the_broad_sector_rule_replays_unchanged(self):
+        frozen = dict(parameters={"weak_exposure_floor": "0.03", "single_stock_guard_cap": "0.10",
+                                  "single_stock_guard_min_members": 10, "core_exposure_tier_floor": "0.15"})
+        self.assertTrue(self.broad(1026, policy=frozen)["entry_allowed"])
+
     def test_t03_decimal_floor_with_multiple_positive_constituents(self):
         for exposure, expected in ((".02899", False), (".029", True), (".02901", True)):
             with self.subTest(exposure=exposure):

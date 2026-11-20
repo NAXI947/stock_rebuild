@@ -4,7 +4,8 @@ from hashlib import sha256
 import json
 import os
 
-VERSION = "etf-representativeness-v1"
+VERSION = "etf-representativeness-v2"
+PROMPT_VERSION = "etf-representativeness-v1"  # prompt wording is unchanged by v2
 METHOD = "etf-direction-first-v3"
 MODES = {"V2", "V3_SHADOW", "V3_ENFORCE"}
 PARAMETERS = (
@@ -12,10 +13,12 @@ PARAMETERS = (
     ("single_stock_guard_cap", "0.10"),
     ("single_stock_guard_min_members", 10),
     ("core_exposure_tier_floor", "0.15"),
+    ("broad_sector_min_members", 300),
 )
 REJECTIONS = frozenset((
     "NO_OVERLAP_CONFIRMED", "WEAK_OVERLAP_REJECTED",
     "SINGLE_STOCK_CROSSOVER_REJECTED", "WEAK_OVERLAP_UPPER_BOUND_REJECTED",
+    "BROAD_SECTOR_UNATTRIBUTED",
 ))
 ZERO = Decimal(0)
 ONE = Decimal(1)
@@ -31,13 +34,13 @@ def freeze_policy(mapping, cutoff, *, mode=None):
                 parameter_digest=sha256(json.dumps(parameters, sort_keys=True).encode()).hexdigest(),
                 mapping_version=mapping["version"], data_cutoff=cutoff.isoformat(),
                 taxonomy_version=(mapping.get("etf_taxonomy") or {}).get("version"),
-                prompt_version=VERSION if mode == "V3_ENFORCE" else "scoped-facts-v1")
+                prompt_version=PROMPT_VERSION if mode == "V3_ENFORCE" else "scoped-facts-v1")
 
 
 def evaluate_pair_representativeness(frozen_sector_members, known_weights, *,
                                      sector_members_complete, weights_complete_and_valid,
                                      partial_upper_bound_proven=False, explicit_relation=False,
-                                     policy=None):
+                                     attributed=False, policy=None):
     parameters = dict(PARAMETERS) if policy is None else policy["parameters"]
     floor = Decimal(parameters["weak_exposure_floor"])
     guard = Decimal(parameters["single_stock_guard_cap"])
@@ -76,6 +79,12 @@ def evaluate_pair_representativeness(frozen_sector_members, known_weights, *,
                 status = "WEAK_OVERLAP_UPPER_BOUND_REJECTED"
             elif exposure >= floor:
                 status = "RELEVANCE_NOT_REJECTED"
+    # Membership overlap cannot tell a related index from an unrelated one once a concept
+    # sector holds a large part of the market, so entry there needs a reviewed attribution.
+    broad = parameters.get("broad_sector_min_members")
+    if (status not in REJECTIONS and broad is not None and len(members) >= broad
+            and not (attributed or explicit_relation)):
+        status = "BROAD_SECTOR_UNATTRIBUTED"
     if status not in REJECTIONS and not associated:
         status = "ASSOCIATION_UNCONFIRMED"
     reasons = [] if status == "RELEVANCE_NOT_REJECTED" else [status]

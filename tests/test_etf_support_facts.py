@@ -27,6 +27,16 @@ class SupportTests(unittest.TestCase):
             self.policy = freeze_policy(self.mapping, self.at)
         self.facts = freeze_pair_facts(self.mapping, self.at, ["a", "b"], self.policy)
 
+    def test_broad_sector_entry_follows_the_published_attribution(self):
+        crowd = [f"30{i:04d}.SZ" for i in range(300)]
+        mapping = dict(self.mapping, sectors={sid: dict(body, members=body["members"] + crowd, reported_count=302)
+                                              for sid, body in self.mapping["sectors"].items()})
+        mapping["etf_taxonomy"] = dict(self.mapping["etf_taxonomy"], rows=self.mapping["etf_taxonomy"]["rows"][:1])
+        facts = freeze_pair_facts(mapping, self.at, ["a", "b"], self.policy)
+        self.assertEqual({sid: (facts[sid][self.code]["entry_allowed"], facts[sid][self.code]["representativeness_status"])
+                          for sid in ("a", "b")},
+                         {"a": (True, "RELEVANCE_NOT_REJECTED"), "b": (False, "BROAD_SECTOR_UNATTRIBUTED")})
+
     def project(self, a, b, *, chosen=False):
         report = dict(id="report-id", sectors={"a": {"state": a}, "b": {"state": b}})
         recs = dict(sectors={"a":{"products":[dict(etf=self.code, representative_current=chosen)]}})

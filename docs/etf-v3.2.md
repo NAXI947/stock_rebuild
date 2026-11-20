@@ -40,6 +40,15 @@ python -B -m tools.publish_etf_taxonomy --environment-file /absolute/test.env \
   --mapping-file /absolute/etf-mapping.json --taxonomy-file /absolute/reviewed-taxonomy.json
 ```
 
+## 大板块入场约束（etf-representativeness-v2）
+
+2026-11-20 用户授权，按「先避免亏损、宁可少做」收紧新开仓。成员数不少于 300 的板块，成员重合度分不开对口与不对口的指数：
+生产 11-20 10:35 的报告里，算力板块（1,026 只成员）对中证全指家用电器的暴露是 70.6%，对中证计算机主题是 78.2%。
+这类板块的配对只有在已发布的产业归属（带依据、已到生效时间）或显式关联存在时才允许新开仓，否则状态为
+`BROAD_SECTOR_UNATTRIBUTED`，仍作为观察项显示。参数 `broad_sector_min_members=300` 随策略一起冻结；
+此前冻结的策略没有该参数，回放结果不变。只影响新开仓，减仓、清仓和已有周期沿用各自冻结的规则。提示词文本未变，仍为
+`etf-representativeness-v1`。
+
 ## 生产启用边界
 
 生产正式发布使用经审核的固定镜像。在发布脚本 `--automation` 指定的设置文件中配置 `ETF_REPRESENTATIVENESS_MODE`，该模式会随镜像摘要和 Compose 文件一起保存。先观察 `V3_SHADOW` 的生产差异和数据覆盖，再选择维护窗口为新准备轮次发布 `V3_ENFORCE`。回退恢复上一发布版本所记录的模式，旧设置文件缺少该字段时按 `V2` 处理。已冻结轮次与在途周期沿其保存的版本继续处理。产业归属由有来源的已核验记录逐步发布。

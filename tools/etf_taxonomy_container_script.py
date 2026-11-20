@@ -8,37 +8,21 @@ import argparse
 import json
 from pathlib import Path
 
-TEMPLATE = '''import json, os, sys, tempfile, types
+TEMPLATE = '''import json, os, types
 from datetime import datetime
 from pathlib import Path
 SRC = {source}
 TAX = {taxonomy}
-MAPPING = os.environ.get("APP_MAPPING_FILE", "/app/data/etf-mapping.json")
+mode = os.environ.get("TAXONOMY_MODE", "DRY")
+if mode not in ("DRY", "PUBLISH"):
+    raise SystemExit("TAXONOMY_MODE must be DRY or PUBLISH")
 tool = types.ModuleType("publish_etf_taxonomy")
 exec(compile(SRC, "publish_etf_taxonomy.py", "exec"), tool.__dict__)
-mode = os.environ.get("TAXONOMY_MODE", "DRY")
-if mode == "DRY":
-    settings = tool.Settings.from_values(os.environ)
-    ledger = tool.PostgresLedger(settings, "LIVE" if settings.env == "production" else "FROZEN")
-    at = datetime.now(tool.CHINA)
-    current = tool.live_mapping(ledger, Path(MAPPING), at)
-    taxonomy = tool.reviewed_taxonomy(json.loads(TAX), current, at)
-    previous = current.get("etf_taxonomy") or {{}}
-    print(json.dumps(dict(status="DRY_OK", env=settings.env, namespace=ledger.ns, mapping_version=current["version"],
-                          previous_taxonomy=previous.get("version"), previous_rows=len(previous.get("rows", [])),
-                          new_taxonomy=taxonomy["version"], new_rows=len(taxonomy["rows"]))))
-elif mode == "PUBLISH":
-    tool.Settings.read = classmethod(lambda cls, path: cls.from_values(os.environ))
-    with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as handle:
-        handle.write(TAX)
-    try:
-        sys.argv = ["publish_etf_taxonomy", "--environment-file", "/proc/self/environ",
-                    "--mapping-file", MAPPING, "--taxonomy-file", handle.name]
-        tool.main()
-    finally:
-        os.unlink(handle.name)
-else:
-    raise SystemExit("TAXONOMY_MODE must be DRY or PUBLISH")
+settings = tool.Settings.from_values(os.environ)
+ledger = tool.PostgresLedger(settings, "LIVE" if settings.env == "production" else "FROZEN")
+result = tool.publish(ledger, Path(os.environ.get("APP_MAPPING_FILE", "/app/data/etf-mapping.json")),
+                      json.loads(TAX), datetime.now(tool.CHINA), dry_run=mode == "DRY")
+print(json.dumps(dict(result, env=settings.env, namespace=ledger.ns)))
 '''
 
 

@@ -71,11 +71,12 @@ ssh root@<生产主机> 'docker exec -i -e TAXONOMY_MODE=DRY stock-v4-worker pyt
 ssh root@<生产主机> 'docker exec -i -e TAXONOMY_MODE=PUBLISH stock-v4-worker python -B -' < publish.py
 ```
 
-- `DRY` 只读校验，返回 `DRY_OK`、当前映射版本、原行数和新行数。核对无误再执行 `PUBLISH`。
+- `DRY` 走与发布相同的校验但不写入，返回 `DRY_OK`、将生成的映射版本、父版本、原行数和新行数。凡发布会拒绝的，`DRY` 同样报错。核对无误再执行 `PUBLISH`。
+- 内容与当前已发布的完全相同时，两种模式都返回 `CURRENT`，不写入。
 - `PUBLISH` 追加一个新的映射版本，返回 `PUBLISHED` 和新映射版本号。
 - 避开五轮研判（09:35、10:35、13:05、14:05、14:30）和两个维护槽（10:00、14:15）。轮次状态为 `PUBLISHED` 后再发布。
 
-测试环境直接运行 `tools.publish_etf_taxonomy`，命令见 [ETF V3.2 调测说明](etf-v3.2.md)。
+测试环境直接运行 `tools.publish_etf_taxonomy`，加 `--dry-run` 只校验，命令见 [ETF V3.2 调测说明](etf-v3.2.md)。
 
 ## 核对与回退
 

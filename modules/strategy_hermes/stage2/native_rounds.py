@@ -233,7 +233,8 @@ class NativeRounds:
                     if not isinstance(sections,dict) and report:
                         from .notifications import brief_sections
                         orders = conn.execute('''SELECT c.etf,o.action,o.remaining_quantity,o.status,
-                            o.evidence->>'eligible_at',(o.evidence->>'report_id'=%s)
+                            o.evidence->>'eligible_at',(o.evidence->>'report_id'=%s),o.evidence->>'last_block',
+                            o.evidence->>'trigger_reason',o.evidence->>'trigger_price',o.target_quantity
                             FROM simulation_orders o JOIN cycles c ON (c.ns,c.id)=(o.ns,o.cycle_id)
                             WHERE o.ns=%s AND (o.status='PENDING' OR o.evidence->>'report_id'=%s)
                             ORDER BY o.requested_at DESC,c.etf,o.action''',

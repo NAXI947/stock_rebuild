@@ -74,6 +74,17 @@
 修改 `Rules.v2()` 的任何数值都必须换新的版本名，否则报 `changed rules require a new version`。
 v1 的规则快照不含 v2 字段，与升级前逐字节一致。
 
+## 展示
+
+| 位置 | 内容 |
+|---|---|
+| 大盘全景 · 大盘三档（`market_panorama.load_regime`、`web/app.js` 的 `renderMarketRegime`） | 近 5 个交易日收盘判定的档位折线图，每日附量能比和各指数相对 MA20 的位置。只读已入库的 107 日线；数据不足的交易日显示“数据不足”并画一条虚线，不画档位，也不与相邻日连线 |
+| 工作台 · 退出计划 | 规则版本、大盘档位、ATR20、止损线、移动止盈、目标止盈、采样浮盈与峰值、余仓保本状态、持有日 / 上限、回退标注（`signal_cycle.view` 的 `exit_view`） |
+| 工作台 · 自动节点 | 触发原因、触发价、成交价 |
+| QQ 轮次简报（`stage2/notifications.py`） | 节点按原因码显示（如“止损清”“目标止盈减”）并带触发价；由报价触发的节点标“报价触发”，上一份报告之后才触发且已成交的也会列出一次 |
+
+浮盈与峰值只取轮次采样报价，不用日线最高价。
+
 ## 运行与测试
 
 ```bash
@@ -82,7 +93,8 @@ python -B -m unittest discover -s tests -q   # 全量，需按 README 先起 Pos
 ```
 
 `tests/test_signal_cycle_v2.py` 的用例名带开发文档的编号（T01–T27）；T15 的分档和 T26 的采集调度在
-`tests/test_market_regime.py`。
+`tests/test_market_regime.py`。展示相关用例在 `tests/test_market_panorama.py`（`RegimeTest`）、
+`tests/test_qq_visual_report.py` 和 `tests/test_stage2_postgres.py`（`test_v2_exit_raised_and_filled_between_rounds…`）。
 
 ## 未实现
 

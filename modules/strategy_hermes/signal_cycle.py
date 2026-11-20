@@ -269,6 +269,18 @@ def view(cycle, latest, now):
         start = moment(cycle["book"]["fills"][0]["filled_at"])
         end = moment(cycle["closed_at"]) if cycle["closed_at"] else now
         state["position_duration_seconds"] = (end-start)//timedelta(seconds=1)
+    plan = cycle.get("exit_plan")
+    if plan:
+        # Sampled figures only; a closed cycle keeps the last sample taken while it was held.
+        seen = cycle.get("last_quote")
+        with localcontext(PRECISION):
+            cost = decimal(plan["cost_price"])
+            ratio = lambda price: str((decimal(price) / cost - 1).quantize(decimal("0.000001")))
+            state["exit_view"] = dict(
+                return_ratio=ratio(seen["price"]) if seen else None, peak_return_ratio=ratio(cycle["peak_price"]),
+                sampled_at=seen["observed_at"] if seen else None, held_days=seen["held_days"] if seen else None,
+                max_days=plan["max_days"], breakeven_armed=cycle["breakeven_armed"],
+                remainder=any(fill["action"] == "REDUCE" for fill in cycle["book"]["fills"]))
     order = pending(cycle)
     if order:
         t1 = order["action"] != "BUY" and not eligible_lots(cycle["book"], now.date())

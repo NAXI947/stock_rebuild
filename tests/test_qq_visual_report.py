@@ -144,6 +144,20 @@ class QQVisualReport(TestCase):
             self.assertIn(part,value)
         self.assertNotIn('已成交',value)
 
+    def test_v2_nodes_name_their_trigger_and_show_quote_exits_already_filled(self):
+        entry=fixture()
+        orders=[(ETF,'EXIT',0,'FILLED','2026-11-13T09:30:00+08:00',None,None,'STOP_LOSS_HIT','0.970',1000),
+                (ETF,'REDUCE',500,'PENDING','2026-11-16T09:30:00+08:00',None,None,'TARGET_PROFIT_REDUCE','1.045',500),
+                (ETF,'EXIT',500,'PENDING','2026-11-16T09:30:00+08:00',True,None,'AI_WEAK_CROSS_DAY_2','1.010',500),
+                (ETF,'REDUCE',500,'PENDING','2026-11-16T09:30:00+08:00',False,None,None,None,500)]
+        value=visual_brief_sections('14:30',entry,orders)['simulation']
+        for part in ('止损清1000份 触发价0.970 [已成交]（报价触发）','目标止盈减500份 触发价1.045 [待T+1]（报价触发）',
+                     '跨日转弱清500份 [待T+1]','转弱减500份 [待T+1]（前轮）'):
+            self.assertIn(part,value)
+        legacy='\n'.join(str(item) for item in brief_sections('14:30',entry,orders).values())
+        self.assertIn('止损清1000份 触发价0.970，已成交（报价触发）',legacy)
+        self.assertIn('首次转弱减仓 500 份，待 T+1（前轮）',legacy)
+
     def test_visual_etf_categories_keep_existing_representative_order_and_conditions(self):
         entry=fixture()
         entry['input_meta']['etf_recommendations']={'sectors':{SID:{

@@ -322,6 +322,7 @@ def _sector_inputs(rows, links, days, prior):
 
 def _database_context(ledger, day, codes, as_of, *, checkpoint=None):
     """Read shared dated calendar/sector evidence once for a whole market day."""
+    codes = list(codes)  # psycopg binds a tuple as a record, not an array
     if checkpoint:
         checkpoint()
     with ledger._connect() as conn:
@@ -395,6 +396,7 @@ def _database_context(ledger, day, codes, as_of, *, checkpoint=None):
 
 
 def _database_input(ledger, day, codes, as_of, *, checkpoint=None, context=None):
+    codes = list(codes)
     context = context if context is not None else _database_context(ledger, day, codes, as_of, checkpoint=checkpoint)
     if checkpoint:
         checkpoint()

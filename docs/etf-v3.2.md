@@ -8,7 +8,7 @@
 | 代表性与聚合 | `stage2/etf_representativeness.py`、`stage2/etf_support_facts.py` |
 | 建周期和发布 | `stage2/worker.py`、`stage2/postgres.py`、`ledger.py` |
 | 资料推进 | `stage2/mapping_maintenance.py`、`stage2/reference_policy.py`、`product_materials.py`、`product_verification.py` |
-| 核验和归属发布 | `tools/replay_etf_v32.py`、`tools/publish_etf_taxonomy.py` |
+| 核验和归属发布 | `tools/replay_etf_v32.py`、`tools/publish_etf_taxonomy.py`、`tools/etf_taxonomy_container_script.py` |
 
 以上未带目录前缀的业务文件位于 `modules/strategy_hermes/`。
 
@@ -49,7 +49,7 @@ python -B -m tools.publish_etf_taxonomy --environment-file /absolute/test.env \
 此前冻结的策略没有该参数，回放结果不变。只影响新开仓，减仓、清仓和已有周期沿用各自冻结的规则。提示词文本未变，仍为
 `etf-representativeness-v1`。
 
-活跃板块里已登记产业归属的指数，取权重时与显式关联同级，不排在普通轮换里等待；否则登记后迟迟没有权重，大板块就一直没有可新开仓的产品。
+登记的审核口径和发布步骤见 [大板块产业归属登记](etf-taxonomy-registration.md)。活跃板块里已登记产业归属的指数，取权重时与显式关联同级，不排在普通轮换里等待；否则登记后迟迟没有权重，大板块就一直没有可新开仓的产品。
 
 ## 生产启用边界
 

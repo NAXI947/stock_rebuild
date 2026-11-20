@@ -59,6 +59,13 @@ class ReferenceNames(unittest.TestCase):
         self.assertIn(chosen,evidence["source_batches"])
         self.assertEqual(set(evidence["source_batches"]) & set(self.batches),{chosen})
 
+    def test_scheduled_refresh_scope_tuple_reads_the_same_names_as_a_list(self):
+        # LeftRightRefresh keeps its configured codes as a tuple.
+        self.save(CODE,"基础资料名称",AS_OF-timedelta(days=1),DAY-timedelta(days=3))
+        listed = _database_input(self.store,DAY,[CODE],AS_OF)["symbols"][CODE]
+        self.assertEqual(listed["name"],"基础资料名称")
+        self.assertEqual(_database_input(self.store,DAY,(CODE,),AS_OF)["symbols"][CODE]["name"],listed["name"])
+
     def test_existing_046_name_keeps_precedence_and_does_not_claim_unused_source(self):
         batch = self.save(CODE,"基础资料名称",AS_OF-timedelta(days=1),DAY)
         with patch("modules.strategy_hermes.stage2.left_right_eod._membership_links",

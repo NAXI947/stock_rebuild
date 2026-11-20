@@ -167,6 +167,48 @@ class MaterialContract(unittest.TestCase):
              patch.object(materials,'_target_history',return_value=({},set())):
             self.assertEqual(materials.associated_targets(None,current,NOW),[])
 
+    def attributed_mapping(self):
+        current=mapping()
+        crowd=[f'60{n:04d}.SH' for n in range(299)]
+        current['sectors']['kaipanla:broad']=dict(members=['688001.SH',*crowd],reported_count=300,unresolved_count=0,
+            source_batches=['synthetic-member-batch'],as_of_date='2026-11-16')
+        current['weights']['000300.SH']=dict(complete=True,as_of_date='2026-11-16',rows=[
+            dict(code='688001.SH',weight='0.05',mainboard=False),dict(code=crowd[0],weight='0.95',mainboard=True)])
+        fund=lambda index,aum=None:dict(deepcopy(current['products'][ETF]),index_code=index,
+                                         **({'stats':{'aum_yuan':aum}} if aum else {}))
+        current['products'].update({'510300.SH':fund('000300.SH'),'159801.SZ':fund('930713.CSI','5'),
+            '515070.SH':fund('930713.CSI','50'),'159819.SZ':fund('930713.CSI'),'159890.SZ':fund('930851.CSI','1')})
+        row=lambda index:dict(sector_id='kaipanla:broad',index_code=index,family_id='ai',canonical_branch_id='power',
+                              available_at=NOW.isoformat(),evidence_refs=['methodology'])
+        current['etf_taxonomy']=dict(version='t',rows=[row('930713.CSI'),row('930851.CSI')])
+        return current,row
+
+    def chosen(self,current,sectors):
+        with patch('modules.strategy_hermes.stage2.mapping_maintenance._priorities',return_value=([],sectors)), \
+             patch.object(materials,'_target_history',return_value=({},set())):
+            return materials.associated_targets(None,current,NOW)
+
+    def test_attributed_products_lead_the_queue_and_broad_overlap_earns_no_place(self):
+        current,row=self.attributed_mapping()
+        active=['kaipanla:chip','kaipanla:broad']
+        # Largest fund of each attributed index, then the rest; then overlap by exposure to the small sector.
+        self.assertEqual([code for code,_ in self.chosen(current,active)],
+                         ['159890.SZ','515070.SH','159801.SZ','159819.SZ',ETF,'510300.SH'])
+        self.assertEqual(dict(self.chosen(current,active))['515070.SH'],['kaipanla:broad'])
+        self.assertEqual([code for code,_ in self.chosen(current,[])],['159890.SZ','515070.SH','159801.SZ','159819.SZ'])
+        for change in (dict(evidence_refs=[]),dict(available_at=(NOW+timedelta(days=1)).isoformat())):
+            with self.subTest(change=change):
+                current['etf_taxonomy']['rows']=[dict(row('930713.CSI'),**change),dict(row('930851.CSI'),**change)]
+                self.assertEqual(self.chosen(current,[]),[])
+
+    def test_two_slots_stay_with_overlap_associated_products_under_attributed_pressure(self):
+        current,_=self.attributed_mapping()
+        for number in range(12):
+            current['products'][f'{159901+number}.SZ']=deepcopy(current['products']['159801.SZ'])
+        selected=[code for code,_ in self.chosen(current,['kaipanla:chip','kaipanla:broad'])]
+        self.assertEqual(len(selected),materials.MAX_TARGETS)
+        self.assertEqual(selected[-2:],[ETF,'510300.SH'])
+
     def test_fresh_and_oldest_failed_targets_progress_without_fixed_prefix_starvation(self):
         current=mapping()
         for i in range(12):current['products'][f'{588101+i}.SH']=deepcopy(current['products'][ETF])

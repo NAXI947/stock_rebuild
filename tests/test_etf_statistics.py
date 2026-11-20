@@ -37,7 +37,7 @@ class EtfStatistics(TestCase):
                 operations.append((source, scope, limit))
                 return operation()
         def request(source, scope, operation):
-            return dict(status='SAVED', receipt=dict(status='STORED', batch=source, rows=20))
+            return dict(status='SAVED', receipt=dict(status='STORED', batch=source, rows=len(DAYS)))
         with patch.object(stats.Path, 'is_file', return_value=True), \
              patch.object(stats, '_stored_window', return_value={CODE:{}}), \
              patch.object(stats, 'RequestLog', return_value=Budget()):
@@ -54,8 +54,6 @@ class EtfStatistics(TestCase):
         mapping = {'products': {code:dict(index_code='index-'+str(i), rule=dict(verified=False))
                                 for i,code in enumerate(codes)}}
         def execute(sql, params=None):
-            if 'SELECT payload FROM events' in sql:
-                return SimpleNamespace(fetchone=lambda:None)
             return SimpleNamespace(fetchall=lambda:[])
         conn = SimpleNamespace(transaction=lambda:nullcontext(), execute=execute)
         ledger = SimpleNamespace(ns='test', _connect=lambda:nullcontext(conn))
@@ -120,7 +118,7 @@ class EtfStatistics(TestCase):
         calls=[]
         def bounded(source,scope,operation,*,limit):
             calls.append((source,scope,limit))
-            return {"status":"STORED","batch":"b","rows":20}
+            return {"status":"STORED","batch":"b","rows":len(DAYS)}
         budget.call=bounded
         with patch.object(stats,"research_products",return_value={CODE:100}),patch.object(stats.Path,"is_file",return_value=True),\
              patch.object(stats,"RequestLog",return_value=budget) as factory, \
@@ -132,7 +130,7 @@ class EtfStatistics(TestCase):
         self.assertEqual(result["status"],"READY")
         self.assertEqual(len(calls),2)
         self.assertEqual({call[0] for call in calls},{"tushare:etf_statistics_daily","tushare:etf_statistics_adj"})
-        self.assertTrue(all(call[1]["ts_code"]==CODE and call[1]["end_date"]=="20261021" and call[2]==12 for call in calls))
+        self.assertTrue(all(call[1]["ts_code"]==CODE and call[1]["start_date"]=="20261001" and call[1]["end_date"]=="20261021" and call[2]==stats.MAX_PRODUCTS for call in calls))
 
 
     def test_retired_poller_cannot_bypass_unified_queue_in_any_trigger_mode(self):
@@ -199,7 +197,7 @@ class EtfStatistics(TestCase):
         def request(source,scope,operation):
             operations.append((source,scope["attempt"]))
             if scope["attempt"]=="market":return dict(status="FAILED",error_code="TEMPORARY")
-            return dict(status="SAVED",receipt=dict(status="STORED",batch="b",rows=20))
+            return dict(status="SAVED",receipt=dict(status="STORED",batch="b",rows=len(DAYS)))
         with patch.object(stats,"research_products",return_value={CODE:100}), \
              patch.object(stats.Path,"is_file",return_value=True), \
              patch.object(stats,"_stored_window",return_value={CODE:{}}),patch.object(stats,"RequestLog",Budget):
@@ -217,9 +215,11 @@ class EtfStatistics(TestCase):
         codes=[f"51200{i}.SH" for i in range(8)]
         def execute(sql,params=None):
             if "SELECT etf FROM cycles" in sql:
+                self.assertEqual(params[1],["OPEN","WAIT_BUY","WAIT_EXIT"])
                 return SimpleNamespace(fetchall=lambda:[(codes[0],)])
             if "SELECT payload FROM events" in sql:
-                return SimpleNamespace(fetchone=lambda:(dumps({"candidates":{codes[1]:[]}}),))
+                return SimpleNamespace(fetchall=lambda:[(dumps({"candidates":{codes[1]:[]}}),),
+                                                        (dumps({"candidates":{codes[2]:[]}}),)])
             return SimpleNamespace(fetchall=lambda:[])
         conn=SimpleNamespace(transaction=lambda:nullcontext(),execute=execute)
         ledger=SimpleNamespace(ns="test",_connect=lambda:nullcontext(conn))
@@ -228,9 +228,15 @@ class EtfStatistics(TestCase):
             a=stats.select_targets(ledger,{"products":{}},DAYS+["2026-10-22"],AT.replace(hour=10,minute=0),limit=3)
             b=stats.select_targets(ledger,{"products":{}},DAYS+["2026-10-22","2026-10-23"],
                                    AT.replace(day=23,hour=10,minute=0),limit=3)
-        self.assertEqual(a[:2],codes[:2])
+        self.assertEqual(a[0],codes[0])
+        self.assertEqual(a[1],codes[1])
         self.assertNotEqual(a[-1],b[-1])
         self.assertTrue(set(a+b)-set(codes[:3]))
+        with patch.object(stats,"research_products",return_value=dict.fromkeys(codes,100)), \
+             patch.object(stats,"_stored_window",return_value={code:{} for code in codes}):
+            full=stats.select_targets(ledger,{"products":{}},DAYS+["2026-10-22"],AT.replace(hour=10,minute=0),limit=8)
+        self.assertEqual(full[0],codes[0])
+        self.assertEqual(set(full[1:3]),{codes[1],codes[2]})
 
     def test_overlay_preserves_original_candidate_statistics(self):
         from contextlib import nullcontext

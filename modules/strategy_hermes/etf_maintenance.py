@@ -368,14 +368,14 @@ def _reference(executor,claim,request,checkpoint,now,result):
 def _history_targets(ledger,mapping,calendar,now,mode):
     from .stage2.etf_statistics import select_targets
     if mode=='market':
-        return select_targets(ledger,mapping,calendar,now,limit=12)
+        return select_targets(ledger,mapping,calendar,now,limit=24)
     from .stage2.penetration import research_products
     previous=_latest_market_result(ledger,day=now.date().isoformat())
     eligible=research_products(mapping,now)
     failed=[item.get('etf_code') or str(item.get('label',''))[:9]
             for item in previous.get('items',[])
             if item.get('dataset')=='etf_history' and item.get('status') not in GOOD_STATES]
-    return [code for code in dict.fromkeys(failed) if code in eligible][:12]
+    return [code for code in dict.fromkeys(failed) if code in eligible][:24]
 
 
 def execute_job(executor,claim):

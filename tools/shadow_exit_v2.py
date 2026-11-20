@@ -4,11 +4,12 @@ Each automatic cycle that actually filled its buy is rebuilt with the same entry
 buy quote, then every later saved report and quote is fed to the v2 engine. The output compares the
 recorded outcome with the simulated one. The database is only read.
 
-    python -B -m tools.shadow_exit_v2 --env-file /absolute/.env [--since 2026-11-13] [--inputs plans.json]
+    python -B -m tools.shadow_exit_v2 --env-file /absolute/.env [--namespace NS] [--since 2026-11-13] [--inputs plans.json]
     docker exec -i stock-v4-backend python - < tools/shadow_exit_v2.py        # settings from the environment
 """
 import argparse
 from collections import Counter
+from dataclasses import replace
 from decimal import Decimal, localcontext
 import json
 import os
@@ -123,11 +124,16 @@ def main(argv=None):
     from modules.strategy_hermes.stage2.settings import Settings
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--env-file")
+    parser.add_argument("--namespace", help="another run of the same environment; defaults to AUTO_RUN_NAMESPACE")
     parser.add_argument("--since", default="2000-01-01")
     parser.add_argument("--regime-mode", default="DUAL", choices=("DUAL", "SINGLE"))
     parser.add_argument("--inputs", help="JSON {etf: {market_regime, atr20, ...}} used instead of stored batches")
     args = parser.parse_args(argv)
     settings = Settings.read(args.env_file) if args.env_file else Settings.from_values(os.environ)
+    if args.namespace:
+        if not args.namespace.startswith(settings.redis_prefix) or len(args.namespace) > 120:
+            raise ValueError("namespace outside configured environment")
+        settings = replace(settings, namespace=args.namespace)
     ledger = PostgresLedger(settings, "LIVE")
     config, cycles, events = load(ledger, args.since)
     if config is None:

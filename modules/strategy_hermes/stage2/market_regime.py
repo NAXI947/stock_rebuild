@@ -1,9 +1,9 @@
 """Market regime from stored Kaipanla 107 index bars; no stock or ETF data."""
-from datetime import date
+from datetime import date, datetime, time
 from decimal import localcontext
 import re
 
-from ..simulator import PRECISION, decimal
+from ..simulator import CHINA, PRECISION, decimal
 from .inputs import document
 
 BULL, RANGE, BEAR = "BULL_OFFENSE", "RANGE_ROTATION", "BEAR_DEFENSE"
@@ -38,15 +38,22 @@ def normalize_index(body, code):
     return rows[-KEEP_ROWS:]
 
 
+def stored_series(conn, at=None):
+    """Latest stored bars per index as known at one instant, without unfinished sessions."""
+    rows = conn.execute("""SELECT DISTINCT ON (scope->>'StockID') scope->>'StockID',body,collected_at
+        FROM supplier_market_batches WHERE provider='kaipanla' AND endpoint='107'
+        AND scope->>'purpose'='index-kline' AND (%s::timestamptz IS NULL OR collected_at<=%s)
+        ORDER BY scope->>'StockID',collected_at DESC,batch_id DESC""", (at, at)).fetchall()
+    closed = lambda row, collected: datetime.combine(
+        date.fromisoformat(row["trade_date"]), time(15), CHINA) <= collected
+    return {code: [row for row in document(body)["rows"] if closed(row, collected)]
+            for code, body, collected in rows}
+
+
 def load_series(ledger, at=None):
-    """Latest stored bars per index, optionally as known at one instant."""
     with ledger._connect() as conn, conn.transaction():
         conn.execute("SET TRANSACTION READ ONLY")
-        rows = conn.execute("""SELECT DISTINCT ON (scope->>'StockID') scope->>'StockID',body
-            FROM supplier_market_batches WHERE provider='kaipanla' AND endpoint='107'
-            AND scope->>'purpose'='index-kline' AND (%s::timestamptz IS NULL OR collected_at<=%s)
-            ORDER BY scope->>'StockID',collected_at DESC,batch_id DESC""", (at, at)).fetchall()
-    return {code: document(body)["rows"] for code, body in rows}
+        return stored_series(conn, at)
 
 
 def classify(series, as_of, mode, *, bull="1.10", bear="0.90"):

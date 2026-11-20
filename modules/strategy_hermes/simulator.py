@@ -1,5 +1,5 @@
 """Pure quantity, cash and FIFO calculations for frozen A-share ETF replay."""
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, time
 from decimal import Context, Decimal, ROUND_DOWN, ROUND_HALF_UP, localcontext
 import re
@@ -64,6 +64,26 @@ class Calendar:
         return dt.date() in self.days and session(dt)
 
 
+V1, V2 = "hermes_signal_cycle_v1", "hermes_signal_cycle_v2"
+REGIMES = ("BEAR_DEFENSE", "RANGE_ROTATION", "BULL_OFFENSE")
+# Triples are (ATR20 multiple, floor, cap); a line is clamp(multiple * ATR20, floor, cap).
+EXIT_TABLE = {
+    "BEAR_DEFENSE": dict(stop_loss=["0.9", "0.025", "0.040"], trail_start=["0.40", "0.020", "0.030"],
+                         trail_drawdown=["0.35", "0.012", "0.020"], target_reduce=["0.70", "0.025", "0.035"],
+                         stagnant_days=2, stagnant_return="0.010", max_days=3),
+    "RANGE_ROTATION": dict(stop_loss=["1.0", "0.030", "0.050"], trail_start=["0.50", "0.025", "0.035"],
+                           trail_drawdown=["0.40", "0.015", "0.025"], target_reduce=["0.80", "0.030", "0.045"],
+                           stagnant_days=3, stagnant_return="0.010", max_days=5),
+    "BULL_OFFENSE": dict(stop_loss=["1.1", "0.030", "0.055"], trail_start=["0.60", "0.030", "0.045"],
+                         trail_drawdown=["0.50", "0.020", "0.030"], target_reduce=["1.00", "0.040", "0.055"],
+                         stagnant_days=4, stagnant_return="0.015", max_days=7),
+}
+LINES = ("stop_loss", "trail_start", "trail_drawdown", "target_reduce")
+EXIT_FIELDS = ("exit_table", "breakeven_arm_return", "breakeven_buffer", "time_exit_enabled",
+               "bear_early_weak_exit", "weak_exit_trade_days", "regime_mode",
+               "regime_bull_volume_ratio", "regime_bear_volume_ratio")
+
+
 @dataclass(frozen=True)
 class Rules:
     version: str = "hermes_signal_cycle_v1"
@@ -75,8 +95,59 @@ class Rules:
     cash_rounding: str = "CNY_CENT_HALF_UP"
     matching: str = "FIFO_T1_FIRST_VALID_POST_SIGNAL"
     pending_sell: str = "CARRY_UNTIL_EXIT"
+    # Price and time exits. Unset on v1, whose stored snapshots never contain these fields.
+    exit_table: dict | None = None
+    breakeven_arm_return: str | None = None
+    breakeven_buffer: str | None = None
+    time_exit_enabled: bool = False
+    bear_early_weak_exit: bool = False
+    weak_exit_trade_days: int | None = None
+    regime_mode: str | None = None
+    regime_bull_volume_ratio: str | None = None
+    regime_bear_volume_ratio: str | None = None
+
+    @classmethod
+    def v2(cls, regime_mode, **changes):
+        """Changing any value here requires a new version name."""
+        values = dict(version=V2, exit_table=EXIT_TABLE, breakeven_arm_return="0.015", breakeven_buffer="1.003",
+                      time_exit_enabled=True, bear_early_weak_exit=False, weak_exit_trade_days=2,
+                      regime_mode=regime_mode, regime_bull_volume_ratio="1.10", regime_bear_volume_ratio="0.90")
+        return cls(**(values | changes))
+
+    def snapshot(self):
+        """Frozen form for cycles and rule_versions; v1 keeps its original keys."""
+        body = asdict(self)
+        if self.exit_table is None:
+            for key in EXIT_FIELDS:
+                del body[key]
+        return body
+
+    def _check_exits(self):
+        if self.exit_table is None:
+            if any(getattr(self, key) for key in EXIT_FIELDS):
+                raise ValueError("exit settings require an exit table")
+            return
+        if self.version == V1 or set(self.exit_table) != set(REGIMES) or self.regime_mode not in ("DUAL", "SINGLE"):
+            raise ValueError("invalid exit rules")
+        for row in self.exit_table.values():
+            if set(row) != {*LINES, "stagnant_days", "stagnant_return", "max_days"}:
+                raise ValueError("invalid exit table")
+            for key in LINES:
+                multiple, low, high = (decimal(value) for value in row[key])
+                if multiple <= 0 or not 0 < low <= high < 1:
+                    raise ValueError("invalid exit line")
+            days = (row["stagnant_days"], row["max_days"])
+            if any(type(day) is not int or day < 1 for day in days) or days[0] >= days[1] \
+                    or not 0 < decimal(row["stagnant_return"]) < 1:
+                raise ValueError("invalid time exit")
+        if (not 0 < decimal(self.breakeven_arm_return) < 1 or not 1 <= decimal(self.breakeven_buffer) < 2
+                or type(self.weak_exit_trade_days) is not int or self.weak_exit_trade_days < 2
+                or type(self.time_exit_enabled) is not bool or type(self.bear_early_weak_exit) is not bool
+                or not 0 < decimal(self.regime_bear_volume_ratio) < decimal(self.regime_bull_volume_ratio)):
+            raise ValueError("invalid exit rules")
 
     def __post_init__(self):
+        self._check_exits()
         if not self.version or money(decimal(self.initial_cash)) <= 0 or not 0 < decimal(self.reduce_ratio) < 1:
             raise ValueError("invalid rules")
         values = (self.fee_rate, self.minimum_fee, self.slippage_bps)

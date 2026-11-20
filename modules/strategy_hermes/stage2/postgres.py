@@ -1,6 +1,6 @@
 """PostgreSQL automatic cycle ledger and publishing transaction."""
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from itertools import groupby
 import json
 from pathlib import Path
@@ -130,13 +130,35 @@ class PostgresLedger(Ledger):
         if quotes:
             super()._apply(db, ns, quotes, calendar, units, rules)
 
+    def _rules(self):
+        return getattr(self.settings, "rules", Rules)()
+
+    def _exit_inputs(self, db, code, at, calendar, rules):
+        """Read only stored 107 bars and ETF statistics as known at the fill; no provider call."""
+        if self.origin != "LIVE":
+            return {}
+        from .etf_statistics import DAILY, atr20
+        from .inputs import document
+        from .market_regime import classify, stored_series
+        previous = [day for day in calendar.days if day < at.date()]
+        result = {}
+        if previous:
+            result = classify(stored_series(db.connection, at), previous[-1].isoformat(), rules.regime_mode,
+                              bull=rules.regime_bull_volume_ratio, bear=rules.regime_bear_volume_ratio)
+        rows = db.connection.execute("""SELECT body,collected_at FROM supplier_market_batches
+            WHERE provider='tushare' AND endpoint=%s AND scope->>'ts_code'=%s AND collected_at<=%s
+            ORDER BY collected_at DESC,batch_id DESC LIMIT 3""", (DAILY, code, at)).fetchall()
+        daily = [row | dict(available_at=available.isoformat())
+                 for body, available in rows for row in document(body)["rows"]]
+        return result | atr20(code, daily, [day.isoformat() for day in calendar.days], at)
+
     def _store(self, db, raw_events, days, instruments, rule):
         calendar = Calendar(days)
         units = {code: integer(unit) for code, unit in instruments.items() if CODE.fullmatch(code)}
         if len(units) != len(instruments):
             raise ValueError("invalid ETF code in instrument registry")
         config = encode(dict(calendar=days, instruments=units))
-        frozen_rule = encode(asdict(rule))
+        frozen_rule = encode(rule.snapshot())
         db.execute("SELECT pg_advisory_xact_lock(hashtextextended(?,0))", (self.ns,))
         db.execute("INSERT INTO runs VALUES (?,?,NULL,?) ON CONFLICT DO NOTHING", (self.ns, config, self.origin))
         saved, watermark, origin = db.execute("SELECT config,watermark,origin FROM runs WHERE ns=?", (self.ns,)).fetchone()
@@ -210,7 +232,7 @@ class PostgresLedger(Ledger):
             units = execution_units(connection, self.ns, self.origin, instruments)
             if self.origin == "LIVE":
                 refresh_waiting(self, connection)
-            _, new_ids=self._store(BoundConnection(connection),quotes,execution_days,units,rule or Rules())
+            _, new_ids=self._store(BoundConnection(connection),quotes,execution_days,units,rule or self._rules())
             if new_ids:
                 report=connection.execute(
                     """SELECT id FROM events WHERE ns=%s AND kind='report'
@@ -300,7 +322,7 @@ class PostgresLedger(Ledger):
                 validate_publication(self, conn, claim, input_meta['manual_recovery'])
             if etf_projection is not None and etf_projection["policy"]["policy_mode"] == "V3_ENFORCE":
                 db.etf_anchor = {decoded["id"]: etf_projection["pairs"]}
-            committed,_=self._store(db,[report],execution_days,units,rule or Rules())
+            committed,_=self._store(db,[report],execution_days,units,rule or self._rules())
             if len(committed)!=1:
                 raise ValueError("report ID already belongs to a committed round")
             published=committed[0]

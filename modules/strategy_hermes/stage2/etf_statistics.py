@@ -1,7 +1,7 @@
 """Bounded ETF history intake and point-in-time recommendation statistics."""
 from copy import deepcopy
 from datetime import date, datetime, time
-from decimal import localcontext
+from decimal import Decimal, localcontext
 from pathlib import Path
 
 
@@ -226,7 +226,8 @@ def atr20(symbol, daily, calendar, at):
                 for day in window:
                     high, low, base = (decimal(rows[day][key]) for key in ("high_cny", "low_cny", "pre_close_cny"))
                     total += max(high - low, abs(high - base), abs(low - base)) / base
-                return dict(atr20=str(total / 20), atr_as_of=window[-1])
+                # Six places keep the frozen value inside the ledger's exact-decimal range.
+                return dict(atr20=str((total / 20).quantize(Decimal("0.000001"))), atr_as_of=window[-1])
     return dict(atr20=None, atr_as_of=None)
 
 

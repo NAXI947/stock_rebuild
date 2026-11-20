@@ -734,6 +734,10 @@ def freeze_pair_facts(mapping, at, sector_ids, policy):
     products = research_products(mapping, at)
     indexes = {item["index_code"] for item in products.values()}
     bases = {idx: _dated_weights(mapping.get("weights", {}).get(idx), at) for idx in indexes}
+    taxonomy = mapping.get("etf_taxonomy") or {}
+    attributed = {(row["sector_id"], row["index_code"]) for row in taxonomy.get("rows", ())
+                  if policy.get("taxonomy_version") and taxonomy.get("version") == policy["taxonomy_version"]
+                  and row.get("evidence_refs") and moment(row["available_at"]) <= at}
     facts = {}
     for sid in dict.fromkeys(sector_ids):
         members, complete = _formal_members(mapping, sid, at)
@@ -753,7 +757,7 @@ def freeze_pair_facts(mapping, at, sector_ids, policy):
                     and proof.get("scope") == "FULL_INDEX_ABSOLUTE"
                     and proof.get("index_code") == index and proof.get("as_of_date") == raw.get("as_of_date")
                     and proof.get("source_ref") and raw.get("available_at")),
-                explicit_relation=linked, policy=policy)
+                explicit_relation=linked, attributed=(sid, index) in attributed, policy=policy)
             by_index[index].update(explicit_relation=linked, weight_available=source is not None,
                                    weight_complete=source is not None and raw.get("complete") is True,
                                    source_time=raw.get("available_at") if source else relations.get(index, {}).get("available_at"))

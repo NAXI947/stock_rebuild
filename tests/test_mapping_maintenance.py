@@ -89,6 +89,28 @@ class CatalogAndWeights(TestCase):
         self.assertLessEqual(len(targets),maintenance.MAX_SECTORS)
 
 
+    def test_attributed_index_without_weights_is_fetched_before_rotation_reaches_it(self):
+        ordinary = ['000%03d.SH' % n for n in range(900, 940)]
+        row = dict(sector_id=SID, index_code=None, family_id='battery', canonical_branch_id='lithium_battery',
+                   available_at=NOW.isoformat(), evidence_refs=['methodology'])
+        data = dict(version='attributed', sectors={SID: dict(members=[])}, weights={}, products={
+            '5120%02d.SH' % n: dict(index_code=index, list_status='L') for n, index in enumerate(ordinary)})
+        with patch.dict('os.environ', {'ETF_REPRESENTATIVENESS_MODE': 'V2'}):
+            rotation = maintenance._weight_targets(data, [], [SID], NOW, NOW.date(), None)
+        wanted = row['index_code'] = next(index for index in ordinary if index not in rotation)
+        cases = ((dict(version='t', rows=[row]), [SID], True), (dict(version='t', rows=[row]), [], False),
+                 (dict(version='t', rows=[dict(row, evidence_refs=[])]), [SID], False),
+                 (dict(version='t', rows=[dict(row, available_at=(NOW + timedelta(days=1)).isoformat())]), [SID], False),
+                 (None, [SID], False))
+        with patch.dict('os.environ', {'ETF_REPRESENTATIVENESS_MODE': 'V2'}):
+            for taxonomy, sectors, expected in cases:
+                with self.subTest(taxonomy=taxonomy, sectors=sectors):
+                    selected = maintenance._weight_targets(dict(data, etf_taxonomy=taxonomy), [], sectors, NOW,
+                                                           NOW.date(), None)
+                    self.assertEqual(len(selected), maintenance.MAX_INDEXES)
+                    self.assertEqual(selected[0] == wanted, expected)
+                    self.assertEqual(wanted in selected, expected)
+
     def test_index_weight_reserved_rotation_advances_ordinary_targets_under_priority_pressure(self):
         """T26-a for index weights: more held indexes than slots never starve the due ordinary ones."""
         from modules.strategy_hermes.stage2.reference_policy import ReferencePolicy

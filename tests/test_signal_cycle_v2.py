@@ -234,6 +234,13 @@ class ReportExits(TestCase):
         self.assertEqual((held["status"], held["weak_trade_days"], len(held["orders"])), ("OPEN", [DAYS[2]], 2))
         unknown = feed(opened(RANGE, "0.025"), (1, "10:35", "WEAK"), (1, "13:05", "UNKNOWN"), (2, "09:35", "WEAK"))
         self.assertEqual(trail(unknown)[-1], ("EXIT", "PENDING", "AI_WEAK_CROSS_DAY_2"))
+        # Weak evidence repeated in a later report is stored as HOLD and must not reset the count.
+        repeated = feed(opened(RANGE, "0.025"), (1, "10:35", "WEAK"))
+        echo = report(1, "13:05", "HOLD")
+        echo["sectors"][SECTOR].update(phase="WEAKEN", duplicate_evidence=True)
+        apply_report(repeated, echo)
+        self.assertEqual(repeated["weak_trade_days"], [DAYS[1]])
+        self.assertEqual(trail(feed(repeated, (2, "09:35", "WEAK")))[-1], ("EXIT", "PENDING", "AI_WEAK_CROSS_DAY_2"))
 
     def test_retreat_clears_and_waiting_buy_is_cancelled(self):
         cycle = feed(opened(RANGE, "0.025"), (1, "09:35", "1.010"), (1, "10:35", "EXIT"))

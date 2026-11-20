@@ -431,6 +431,23 @@ class StageTwo(unittest.TestCase):
                                   (self.ns,"report:v2-later")).fetchone()
         self.assertEqual(json.loads(payload)["sections"]["simulation"],"无待执行")
 
+    def test_v2_reduction_replaced_by_an_exit_between_rounds_is_not_listed(self):
+        self.store.settings=replace(self.settings,evaluation_rule="hermes_signal_cycle_v2",regime_mode="DUAL")
+        self.publish("v2-entry",D1,"09:35","新增",self.market(D1,"09:34","10"))
+        self.quotes(D1,"09:36","10",1)
+        self.quotes(D1,"14:06","10.50",2)
+        self.quotes(D1,"14:10","9.60",3)
+        cycle,=self.store.inspect()["cycles"]
+        self.assertEqual([(order["action"],order["status"],order.get("trigger_reason")) for order in cycle["orders"][1:]],
+                         [("REDUCE","SUPERSEDED","TARGET_PROFIT_REDUCE"),("EXIT","PENDING","STOP_LOSS_HIT")])
+        self.publish("v2-next",D2,"09:35","维持",None)
+        with self.store._connect() as conn:
+            payload,=conn.execute("SELECT payload FROM outbox WHERE ns=%s AND target='octop' AND event_key=%s",
+                                  (self.ns,"report:v2-next")).fetchone()
+        simulation=json.loads(payload)["sections"]["simulation"]
+        self.assertIn("510001.SH 止损清1000份 触发价9.60",simulation)
+        self.assertNotIn("目标止盈减",simulation)
+
     def test_qq_enqueues_a_report_without_trade_nodes(self):
         self.publish("qq-no-nodes",D1,"09:35","维持",None)
         with self.store._connect() as conn:

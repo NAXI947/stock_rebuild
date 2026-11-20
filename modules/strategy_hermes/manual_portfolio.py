@@ -1,6 +1,5 @@
 """Replay hand-selected ETF nodes with the shared Decimal and FIFO execution engine."""
 from collections import defaultdict
-from dataclasses import asdict
 from decimal import Decimal, localcontext
 from itertools import chain, groupby
 import re
@@ -348,7 +347,7 @@ def replay(bundle):
         ordered = [row[-1] for row in sorted(nodes, key=lambda row: row[:3])]
         result = portfolio.close(cutoff, ordered)
     return {"schema_version": "stock-v4-manual-result-v1", "price_mode": price_mode,
-            "cutoff": cutoff.isoformat(), "source_sha256": fingerprint(bundle), "rules": asdict(rules),
+            "cutoff": cutoff.isoformat(), "source_sha256": fingerprint(bundle), "rules": rules.snapshot(),
             "price_evidence_sha256": fingerprint(bundle["quotes"]),
             "limitations": ["CORPORATE_ACTIONS_SUPPLIED_ONLY" if actions else "CORPORATE_ACTIONS_NOT_INCLUDED"],
             **result}

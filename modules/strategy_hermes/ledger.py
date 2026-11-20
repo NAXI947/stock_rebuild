@@ -1,6 +1,5 @@
 """Offline stage ledger: evidence, event identity, orders, fills and recovery."""
 from contextlib import contextmanager
-from dataclasses import asdict
 from hashlib import sha256
 from itertools import groupby
 import json
@@ -11,7 +10,7 @@ from decimal import Decimal, localcontext
 
 from .adapter import normalize
 from .rotation_chain import COUNTED_PHASES, advance, archive_phase, describe
-from .signal_cycle import apply_report, create_cycle, fill, view
+from .signal_cycle import apply_report, create_cycle, process_quote, view
 from .simulator import CODE, PRECISION, Calendar, Rules, decimal, integer, moment
 
 DDL = """
@@ -109,7 +108,7 @@ class Ledger:
         calendar=Calendar(bundle["calendar"])
         run_config=encode(dict(instruments=units,calendar=bundle["calendar"]))
         rules=Rules(**bundle.get("rules",{}))
-        frozen=encode(asdict(rules))
+        frozen=encode(rules.snapshot())
         events=sorted((event_pair(ev) for ev in bundle["events"]),key=lambda e:(e[0],e[1],e[2]["id"]))
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -141,6 +140,10 @@ class Ledger:
                     watermark=at
             db.commit()
         return self.inspect(ns)
+
+    def _exit_inputs(self,db,code,at,calendar,rules):
+        """Market regime and ATR20 known when a buy fills; none here, so both fall back."""
+        return {}
 
     @staticmethod
     def _save(db,ns,cid,cycle,opened):
@@ -195,7 +198,8 @@ class Ledger:
             db.execute("""INSERT INTO latest VALUES (?,?,?)
                 ON CONFLICT(ns,etf) DO UPDATE SET quote=excluded.quote""",(ns,code,encode(quote)))
             if code in active:
-                fill(active[code][1],quote,calendar)
+                process_quote(active[code][1],quote,calendar,
+                              lambda at,frozen,code=code:self._exit_inputs(db,code,at,calendar,frozen))
         for cid,cycle,opened in active.values():
             self._save(db,ns,cid,cycle,opened)
 

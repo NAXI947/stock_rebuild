@@ -15,7 +15,9 @@ from .tushare_bootstrap import SourceFailure, Tushare
 from .provider_errors import error_diagnostic
 
 VERSION = "etf-history-v1"
-MAX_PRODUCTS = 12
+MAX_PRODUCTS = 24
+FETCH_DAYS = 25
+ATR_LAG_DAYS = 3
 DAILY = "etf_statistics_daily"
 ADJUSTMENT = "etf_statistics_adj"
 START = time(15, 35)
@@ -66,7 +68,7 @@ def select_targets(ledger, mapping, calendar, now, *, limit=MAX_PRODUCTS):
     if type(limit) is not int or not 1 <= limit <= MAX_PRODUCTS:
         raise ValueError("invalid ETF statistics batch limit")
     eligible = sorted(research_products(mapping, now))
-    days = history_window(calendar, now, include_closed_today=True)
+    days = history_window(calendar, now, include_closed_today=True, size=FETCH_DAYS)
     if not eligible or not days:
         return []
     complete = _stored_window(ledger, eligible, days, now)
@@ -76,17 +78,22 @@ def select_targets(ledger, mapping, calendar, now, *, limit=MAX_PRODUCTS):
     with ledger._connect() as conn, conn.transaction():
         conn.execute("SET TRANSACTION READ ONLY")
         held = {row[0] for row in conn.execute(
-            "SELECT etf FROM cycles WHERE ns=%s AND status='OPEN'", (ledger.ns,)).fetchall()}
-        row = conn.execute("SELECT payload FROM events WHERE ns=%s AND kind='report' "
-                           "AND at<=%s ORDER BY at DESC LIMIT 1", (ledger.ns, now.isoformat())).fetchone()
-        report = document(row[0]) if row else {}
+            "SELECT etf FROM cycles WHERE ns=%s AND status=ANY(%s)",
+            (ledger.ns, ["OPEN", "WAIT_BUY", "WAIT_EXIT"])).fetchall()}
+        # Every report of the latest published session, not only its last round.
+        reports = [document(row[0]) for row in conn.execute("""SELECT payload FROM events
+            WHERE ns=%s AND kind='report' AND at<=%s AND left(at,10)=(SELECT left(max(at),10)
+                FROM events WHERE ns=%s AND kind='report' AND at<=%s)""",
+            (ledger.ns, now.isoformat(), ledger.ns, now.isoformat())).fetchall()]
         recent = {row[0]: row[1] for row in conn.execute("""SELECT scope->>'ts_code',max(collected_at)
             FROM supplier_market_batches WHERE provider='tushare' AND endpoint=ANY(%s)
             AND scope->>'ts_code'=ANY(%s) AND collected_at<=%s GROUP BY scope->>'ts_code'""",
             ([DAILY, ADJUSTMENT], eligible, now)).fetchall()}
-    recommended = set(report.get("candidates", {}))
-    for sector in report.get("input_meta", {}).get("etf_recommendations", {}).get("sectors", {}).values():
-        recommended.update(sector.get("representatives", []))
+    recommended = set()
+    for report in reports:
+        recommended.update(report.get("candidates", {}))
+        for sector in report.get("input_meta", {}).get("etf_recommendations", {}).get("sectors", {}).values():
+            recommended.update(sector.get("representatives", []))
     # Oldest-first plus a completed-session rotation prevents permanent code-order starvation.
     offset = days[-1].toordinal() % len(eligible)
     rotated = eligible[offset:] + eligible[:offset]
@@ -100,13 +107,13 @@ def select_targets(ledger, mapping, calendar, now, *, limit=MAX_PRODUCTS):
     return (reserved + remaining)[:limit]
 
 
-def history_window(calendar, at, *, include_closed_today=False):
+def history_window(calendar, at, *, include_closed_today=False, size=20):
     """Only explicitly supplied trading sessions; no weekday reconstruction."""
     at = at.astimezone(CHINA)
     days = sorted(set(date.fromisoformat(d) if isinstance(d, str) else d for d in calendar))
     last = at.date()
     return [day for day in days if day < last or
-            (include_closed_today and day == last and at.time() >= START)][-20:]
+            (include_closed_today and day == last and at.time() >= START)][-size:]
 
 
 def normalize_daily(rows, symbol, days):
@@ -127,6 +134,7 @@ def normalize_daily(rows, symbol, days):
             raise SourceFailure("ETF statistics daily price/amount mismatch")
         result[day] = dict(code=symbol, trade_date=day.isoformat(),
                            close_cny=str(values["close"]), pre_close_cny=str(values["pre_close"]),
+                           high_cny=str(values["high"]), low_cny=str(values["low"]),
                            volume_units=str(values["vol"] * 100),
                            amount_cny=str(values["amount"] * 1000))
     if not result:
@@ -194,8 +202,36 @@ def derive(symbol, daily, factors, calendar, at):
     return result
 
 
+def atr20(symbol, daily, calendar, at):
+    """Mean true range ratio of 20 completed sessions before the session of ``at``.
+
+    The window may end up to ATR_LAG_DAYS sessions back; the day used is reported.
+    """
+    at = at.astimezone(CHINA)
+    days = sorted({d if isinstance(d, str) else d.isoformat() for d in calendar})
+    days = [day for day in days if day < at.date().isoformat()]
+    rows = {}
+    for row in daily:
+        day = row.get("trade_date")
+        if (row.get("code") != symbol or not all(row.get(key) for key in ("high_cny", "low_cny", "pre_close_cny"))
+                or not datetime.combine(date.fromisoformat(day), time(15), CHINA) <= moment(row["available_at"]) <= at):
+            continue
+        if day not in rows or moment(rows[day]["available_at"]) < moment(row["available_at"]):
+            rows[day] = row
+    for lag in range(ATR_LAG_DAYS):
+        window = days[len(days) - lag - 20:len(days) - lag]
+        if len(window) == 20 and all(day in rows for day in window):
+            with localcontext(PRECISION):
+                total = 0
+                for day in window:
+                    high, low, base = (decimal(rows[day][key]) for key in ("high_cny", "low_cny", "pre_close_cny"))
+                    total += max(high - low, abs(high - base), abs(low - base)) / base
+                return dict(atr20=str(total / 20), atr_as_of=window[-1])
+    return dict(atr20=None, atr_as_of=None)
+
+
 def refresh(ledger, config, mapping, calendar, now, *, symbols=None, attempt=None, request=None):
-    """At most 24 requests per completed session/opportunity, with durable deduplication.
+    """At most 48 requests per completed session/opportunity, with durable deduplication.
 
     ``request`` optionally wraps each actual provider operation in the maintenance
     job's shared budget. The inner budget also bounds restarts and repeated jobs.
@@ -205,7 +241,7 @@ def refresh(ledger, config, mapping, calendar, now, *, symbols=None, attempt=Non
     if due is None or (attempt is not None and attempt != due):
         return dict(status="OUTSIDE_WINDOW", new_requests=0)
     attempt = due
-    days = history_window(calendar, now, include_closed_today=True)
+    days = history_window(calendar, now, include_closed_today=True, size=FETCH_DAYS)
     if len(days) < 20:
         return dict(status="INSUFFICIENT_CALENDAR", new_requests=0)
     if not Path(config).is_file():

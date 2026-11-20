@@ -24,6 +24,7 @@ CAPTURE_HOSTS = {
     "018": "apphwshhq.longhuvip.com",
     "041": "apphq.longhuvip.com",
     "046": "apphis.longhuvip.com",
+    "107": "apphis.longhuvip.com",
 }
 EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
@@ -193,12 +194,12 @@ def capture_request(root, endpoint, overrides=None):
         raise ProbeError("archived URL does not match its captured provider origin", kind='CONFIG_UNAVAILABLE')
     args=dict(parse_qsl(parsed.query,keep_blank_values=True))
     if overrides:
-        allowed={"041":{"Index"},"046":{"Date","PlateID","Index"}}
+        allowed={"041":{"Index"},"046":{"Date","PlateID","Index"},"107":{"StockID"}}
         if not set(overrides).issubset(allowed.get(endpoint,set())):
             raise ProbeError("unsupported captured parameter override")
         args.update(overrides)
         uri=urlunsplit(parsed._replace(query=urlencode(args)))
-    allowed=("Date","PlateID","Index","st","Type","Order","RStart","REnd")
+    allowed=("Date","PlateID","Index","st","Type","Order","RStart","REnd","StockID")
     return Request(uri,headers={"Accept":"application/json"}),{k:args[k] for k in allowed if k in args}
 
 
@@ -209,6 +210,13 @@ def normalize_kaipanla(body, endpoint, scope, received):
         from .macro_refresh import normalize_live
         result=normalize_live(body,received.isoformat())
         return result,len(result["items"]),None
+    if endpoint == "107":
+        from .market_regime import normalize_index
+        try:
+            rows=normalize_index(body,scope.get("StockID"))
+        except (ValueError,TypeError,ArithmeticError):
+            raise ProbeError("provider returned invalid index bars", kind='FIELD_MISMATCH') from None
+        return dict(rows=rows,code=scope["StockID"]),len(rows),None
     code=body.get("errcode")
     if str(code)!="0":
         status=str(code)

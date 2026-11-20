@@ -278,6 +278,11 @@ class PartialMaintenance(TestCase):
         legacy=dict(scope='FULL_INDEX_ABSOLUTE',index_code=INDEX,as_of_date='2026-10-30',source_ref='old')
         basis,_=self.weight_run({'600000.SH':'60'},None,previous={**old,'absolute_weight_proof':legacy})
         self.assertNotIn('absolute_weight_proof',basis)
+        # A proof derived over a legacy mark is stored, so a later run without the official set keeps it.
+        basis,_=self.weight_run({'600000.SH':'60'},{'600000.SH','600036.SH'},previous={**old,'absolute_weight_proof':legacy})
+        self.assertEqual(basis['absolute_weight_proof']['evidence'],'OFFICIAL_SET_SUBSET')
+        kept,_=self.weight_run({'600000.SH':'60'},None,previous=basis)
+        self.assertEqual(kept['absolute_weight_proof'],basis['absolute_weight_proof'])
         derived={**legacy,'evidence':'OFFICIAL_SET_SUBSET','row_count':1,'official_count':2,'weight_total':'0.6'}
         basis,_=self.weight_run({'600000.SH':'60'},None,previous={**old,'absolute_weight_proof':derived})
         self.assertEqual(basis['absolute_weight_proof'],derived)

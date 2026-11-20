@@ -803,7 +803,11 @@ def _maintain(ledger, mapping, market, calendar, config, captures, now, request,
                 same = (basis.get('as_of_date') == old.get('as_of_date') and basis.get('rows') == old.get('rows')
                         and basis.get('complete') == old.get('complete')
                         and basis.get('index_identity') == old.get('index_identity')
-                        and bool(basis.get('absolute_weight_proof')) == bool(old.get('absolute_weight_proof')))
+                        and bool(basis.get('absolute_weight_proof')) == bool(old.get('absolute_weight_proof'))
+                        # Only a partial basis reads its proof, so only there must a derived one be stored.
+                        and (basis.get('complete') is True
+                             or (basis.get('absolute_weight_proof') or {}).get('evidence')
+                             == (old.get('absolute_weight_proof') or {}).get('evidence')))
                 if not same:
                     basis.update(available_at=available.isoformat(),source_batches=[receipt['batch']])
                     updated['weights'][index] = basis

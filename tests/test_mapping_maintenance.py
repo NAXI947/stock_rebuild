@@ -90,6 +90,7 @@ class CatalogAndWeights(TestCase):
 
 
     def test_attributed_index_without_weights_is_fetched_before_rotation_reaches_it(self):
+        """Attributed indexes are fetched whether or not their sector is active today."""
         ordinary = ['000%03d.SH' % n for n in range(900, 940)]
         row = dict(sector_id=SID, index_code=None, family_id='battery', canonical_branch_id='lithium_battery',
                    available_at=NOW.isoformat(), evidence_refs=['methodology'])
@@ -98,7 +99,7 @@ class CatalogAndWeights(TestCase):
         with patch.dict('os.environ', {'ETF_REPRESENTATIVENESS_MODE': 'V2'}):
             rotation = maintenance._weight_targets(data, [], [SID], NOW, NOW.date(), None)
         wanted = row['index_code'] = next(index for index in ordinary if index not in rotation)
-        cases = ((dict(version='t', rows=[row]), [SID], True), (dict(version='t', rows=[row]), [], False),
+        cases = ((dict(version='t', rows=[row]), [SID], True), (dict(version='t', rows=[row]), [], True),
                  (dict(version='t', rows=[dict(row, evidence_refs=[])]), [SID], False),
                  (dict(version='t', rows=[dict(row, available_at=(NOW + timedelta(days=1)).isoformat())]), [SID], False),
                  (None, [SID], False))

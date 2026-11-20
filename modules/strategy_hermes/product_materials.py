@@ -338,7 +338,8 @@ def _target_history(ledger,codes):
 def associated_targets(ledger,mapping,now,target_codes=None):
     from .stage2.mapping_maintenance import _priorities
     from .stage2.penetration import _recommend_sector,_add_explicit_relations,product_entry_reason
-    from .simulator import CODE
+    from .simulator import CODE,moment
+    from .stage2.etf_representativeness import PARAMETERS
     if target_codes is not None and (not isinstance(target_codes,(list,tuple)) or not 1<=len(target_codes)<=MAX_TARGETS
             or any(not isinstance(c,str) or not CODE.fullmatch(c) for c in target_codes)
             or len(set(target_codes))!=len(target_codes)):
@@ -346,6 +347,8 @@ def associated_targets(ledger,mapping,now,target_codes=None):
     held,sectors=_priorities(ledger)
     _, seeds = material_seed_config(mapping)
     targets={}
+    broad=dict(PARAMETERS)['broad_sector_min_members']
+    exposure={}
     # Reuse the exact association calculation before research's display cap and
     # same-index representative choice. Those presentation limits must not starve
     # another product of its first evidence review. Reads only existing mapping.
@@ -360,6 +363,19 @@ def associated_targets(ledger,mapping,now,target_codes=None):
             # legitimately produce more than the ledger's 18 input digits.
             if item.get('association_status')!='VERIFIED' and not any(Decimal(r['weight'])>0 for r in item.get('matched',[])): continue
             targets.setdefault(code,[]).append(sid)
+            # Overlap with a broad sector says nothing about the product, so it earns no place in the queue.
+            if len((source['sectors'].get(sid) or {}).get('members',()))<broad:
+                exposure[code]=max(exposure.get(code,Decimal(0)),Decimal(str(item.get('metrics',{}).get('E') or 0)))
+    # A reviewed attribution is the only way into a broad sector. Verify its products before the
+    # sector turns up, ahead of products that are associated by overlap alone.
+    attributed={}
+    for row in (mapping.get('etf_taxonomy') or {}).get('rows',()):
+        if row.get('evidence_refs') and moment(row['available_at'])<=now:
+            attributed.setdefault(row['index_code'],[]).append(row['sector_id'])
+    for code,product in source['products'].items():
+        if product.get('index_code') in attributed and product.get('list_status','L')=='L':
+            targets.setdefault(code,[]).extend(
+                sid for sid in attributed[product['index_code']] if sid not in targets[code])
     for code in seeds.intersection(source['products']):
         if source['products'][code].get('list_status', 'L') == 'L':
             targets.setdefault(code, [])
@@ -369,6 +385,11 @@ def associated_targets(ledger,mapping,now,target_codes=None):
         # Explicit scope stays stable across duplicate clicks and state changes.
         return [(code,targets[code]) for code in target_codes]
     history,active=_target_history(ledger,targets)
+    depth={}  # largest fund of each attributed index first, so one pass reaches every index
+    for index in attributed:
+        funds=sorted((c for c,p in mapping['products'].items() if p.get('index_code')==index),
+                     key=lambda c:(-Decimal(str((mapping['products'][c].get('stats') or {}).get('aum_yuan') or 0)),c))
+        depth.update((c,n) for n,c in enumerate(funds))
     ranked=[]
     for code in targets:
         reason=product_entry_reason(mapping['products'][code],now)
@@ -376,9 +397,14 @@ def associated_targets(ledger,mapping,now,target_codes=None):
         prior=history.get(code)
         if prior and prior['basis']!=product_basis(mapping['products'][code]):prior=None
         if prior and prior['state']=='AWAITING_REVIEW':continue
-        priority = 0 if code in held else 1 if targets[code] else 2
-        ranked.append((priority,prior is not None,prior['at'] if prior else now,code))
-    return [(row[3],targets[row[3]]) for row in sorted(ranked)[:MAX_TARGETS]]
+        priority = 0 if code in held else 1 if code in depth else 2 if targets[code] else 3
+        # Size and exposure only order first attempts; retries stay oldest first so none is starved.
+        order = 0 if prior else depth[code] if priority==1 else -exposure.get(code,Decimal(0)) if priority==2 else 0
+        ranked.append((priority,prior is not None,order,prior['at'] if prior else now,code))
+    ranked.sort()
+    reserved=[row for row in ranked if row[0]==2][:2]  # overlap-associated products keep moving
+    chosen=list(dict.fromkeys(ranked[:MAX_TARGETS-len(reserved)]+reserved+ranked))[:MAX_TARGETS]
+    return [(row[4],targets[row[4]]) for row in chosen]
 
 
 def _save_target(ledger,target_id,*,state,reason=None,documents=None,request_id=None):

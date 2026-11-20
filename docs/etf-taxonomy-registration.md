@@ -95,8 +95,8 @@ WHERE ns = 'stock-v4:prod:baseline' ORDER BY available_at DESC, version DESC LIM
 
 登记只解除入场约束，配对真正可选还需要两样资料，都由维护任务推进：
 
-- 指数成份权重。活跃板块已登记的指数与显式关联同级优先取，每次最多 8 个。
-- 产品官方材料核验，见 [产品资料核验](etf-product-verification.md)。
+- 指数成份权重。已登记的指数与显式关联同级优先取，不看板块当天是否活跃，每次最多 8 个。只有 10:00 的维护槽接新目标，14:15 是重试槽。
+- 产品官方材料核验，见 [产品资料核验](etf-product-verification.md)。每次最多 8 个，先给已登记指数的产品，每个指数先核验规模最大的一只；其余按重合关联的产品保留 2 个名额。
 
 ## 当前登记（2026-11-20，`etf-taxonomy-v3.2-r3-dividend`，19 行）
 

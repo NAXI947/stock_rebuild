@@ -417,9 +417,10 @@ def _weight_targets(mapping, held, sectors, now, day, policy):
         active = [index for index in active if policy.due('weights:'+index)]
     members = set().union(*(_formal_members(mapping, sid, now)[0] for sid in sectors))
     explicit = set().union(*(_explicit_relations(mapping, sid, now) for sid in sectors))
-    # A reviewed attribution is the only way into a broad sector, so its index must not wait for rotation.
+    # A reviewed attribution is the only way into a broad sector. Its weights must be on hand before
+    # the sector turns up, so they neither wait for rotation nor for the sector to be active.
     explicit |= {row['index_code'] for row in (mapping.get('etf_taxonomy') or {}).get('rows', ())
-                 if row['sector_id'] in sectors and row.get('evidence_refs') and moment(row['available_at']) <= now}
+                 if row.get('evidence_refs') and moment(row['available_at']) <= now}
     top = {products[code] for code in held if code in products}
     _, seed_codes = material_seed_config(mapping)
     seeds = {products[code] for code in seed_codes if code in products}

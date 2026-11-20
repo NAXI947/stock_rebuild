@@ -201,6 +201,19 @@ class MaterialContract(unittest.TestCase):
                 current['etf_taxonomy']['rows']=[dict(row('930713.CSI'),**change),dict(row('930851.CSI'),**change)]
                 self.assertEqual(self.chosen(current,[]),[])
 
+    def test_failed_targets_retry_oldest_first_regardless_of_size_or_exposure(self):
+        current,_=self.attributed_mapping()
+        failed=lambda code,age:dict(basis=materials.product_basis(current['products'][code]),state='NEEDS_MATERIALS',
+                                    at=NOW-timedelta(hours=age))
+        # The smallest attributed fund and the low-exposure product failed longest ago.
+        history={'515070.SH':failed('515070.SH',1),'159801.SZ':failed('159801.SZ',2),'159819.SZ':failed('159819.SZ',3),
+                 '159890.SZ':failed('159890.SZ',1),ETF:failed(ETF,1),'510300.SH':failed('510300.SH',2)}
+        with patch('modules.strategy_hermes.stage2.mapping_maintenance._priorities',
+                   return_value=([],['kaipanla:chip','kaipanla:broad'])), \
+             patch.object(materials,'_target_history',return_value=(history,set())):
+            chosen=[code for code,_ in materials.associated_targets(None,current,NOW)]
+        self.assertEqual(chosen,['159819.SZ','159801.SZ','159890.SZ','515070.SH','510300.SH',ETF])
+
     def test_two_slots_stay_with_overlap_associated_products_under_attributed_pressure(self):
         current,_=self.attributed_mapping()
         for number in range(12):

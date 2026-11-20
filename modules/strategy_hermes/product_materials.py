@@ -398,7 +398,8 @@ def associated_targets(ledger,mapping,now,target_codes=None):
         if prior and prior['basis']!=product_basis(mapping['products'][code]):prior=None
         if prior and prior['state']=='AWAITING_REVIEW':continue
         priority = 0 if code in held else 1 if code in depth else 2 if targets[code] else 3
-        order = depth[code] if priority==1 else -exposure.get(code,Decimal(0)) if priority==2 else 0
+        # Size and exposure only order first attempts; retries stay oldest first so none is starved.
+        order = 0 if prior else depth[code] if priority==1 else -exposure.get(code,Decimal(0)) if priority==2 else 0
         ranked.append((priority,prior is not None,order,prior['at'] if prior else now,code))
     ranked.sort()
     reserved=[row for row in ranked if row[0]==2][:2]  # overlap-associated products keep moving

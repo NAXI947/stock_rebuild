@@ -84,10 +84,13 @@ class Atr(TestCase):
 
     def test_true_range_uses_gap_and_previous_close(self):
         result = stats.atr20("512800.SH", self.rows(DAYS[10:30]), DAYS + ["2026-10-01"], self.AT)
-        self.assertEqual(result, dict(atr20="0.04", atr_as_of=DAYS[-1]))
+        self.assertEqual(result, dict(atr20="0.040000", atr_as_of=DAYS[-1]))
         gap = stats.atr20("512800.SH", self.rows(DAYS[10:30], high_cny="1.08", low_cny="1.06"),
                           DAYS + ["2026-10-01"], self.AT)
-        self.assertEqual(gap["atr20"], "0.08")
+        self.assertEqual(gap["atr20"], "0.080000")
+        thirds = stats.atr20("512800.SH", self.rows(DAYS[10:30], high_cny="1.01", low_cny="1", pre_close_cny="3"),
+                             DAYS + ["2026-10-01"], self.AT)
+        self.assertEqual(thirds["atr20"], "0.666667")
 
     def test_window_may_lag_three_sessions_but_not_more(self):
         calendar = DAYS + ["2026-10-01"]

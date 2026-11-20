@@ -69,6 +69,13 @@ class ExitPlan(TestCase):
                           missing["trail_drawdown"], missing["target_reduce"]),
                          (["ATR_UNAVAILABLE"], None, "0.025", "0.020", "0.012", "0.025"))
 
+    def test_unrounded_atr_is_frozen_at_six_places(self):
+        plan = opened(BEAR, "0.05492131204224070015186513121684315684")["exit_plan"]
+        self.assertEqual((plan["atr20"], plan["stop_loss"], plan["trail_start"], plan["target_reduce"]),
+                         ("0.054921", "0.040", "0.02196840", "0.035"))
+        feed_plan = opened(RANGE, "0.019088760527575725428494922175718780778")
+        self.assertEqual(trail(feed(feed_plan, (1, "10:35", "0.969"))), [("EXIT", "PENDING", "STOP_LOSS_HIT")])
+
     def test_t15_missing_inputs_fall_back_to_range_and_are_flagged(self):
         cycle = create_cycle(ETF, 100, Rules.v2("SINGLE"), report(0, "09:35", "UP"), dict(sector_id=SECTOR), [])
         process_quote(cycle, quote(0, "10:35", "1.000"), CALENDAR)

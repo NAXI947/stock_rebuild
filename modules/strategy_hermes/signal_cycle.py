@@ -1,6 +1,6 @@
 """Deterministic automatic intents. No quote fetching or real order routing."""
 from datetime import datetime, time, timedelta
-from decimal import localcontext
+from decimal import Decimal, localcontext
 
 from .simulator import (LINES, PRECISION, Rules, affordable, buy, decimal, eligible_lots,
                         floor_lot, moment, new_book, sell, shares, valuation)
@@ -76,6 +76,8 @@ def build_exit_plan(cycle, rules, inputs, fill):
     atr = inputs.get("atr20")
     if atr is None:
         flags.append("ATR_UNAVAILABLE")
+    elif -Decimal(atr).as_tuple().exponent > 6:
+        atr = str(Decimal(atr).quantize(Decimal("0.000001")))
     row = rules.exit_table[regime]
     plan = dict(market_regime=regime, regime_mode=rules.regime_mode, regime_as_of=inputs.get("regime_as_of"),
                 atr20=atr, atr_as_of=inputs.get("atr_as_of"), flags=flags)

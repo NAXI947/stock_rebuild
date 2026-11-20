@@ -505,13 +505,15 @@ function renderMarketRegime(data) {
   const latest=days[days.length-1],[latestName,latestTone]=regimes[latest.market_regime] || ["数据不足","missing"];
   const badge=elt("span",undefined,"panorama-badge");
   badge.append(elt("span",latest.trade_date+" 收盘"),elt("b",latestName,"regime-text-"+latestTone));heading.append(badge);
-  const levels=["BULL_OFFENSE","RANGE_ROTATION","BEAR_DEFENSE"],left=74,width=500,step=(width-left)/days.length,rowHeight=38;
-  const x=index=>left+step*(index+.5),y=regime=>rowHeight*(levels.indexOf(regime)+.5);
+  const levels=["BULL_OFFENSE","RANGE_ROTATION","BEAR_DEFENSE"],width=430,step=width/days.length,rowHeight=38;
+  const x=index=>step*(index+.5),y=regime=>rowHeight*(levels.indexOf(regime)+.5);
   const summary=days.map(day=>day.trade_date.slice(5)+" "+(regimes[day.market_regime]?.[0] || "数据不足")).join("，");
   const svg=panoramaSvg("svg",{viewBox:"0 0 "+width+" "+rowHeight*3,role:"img","aria-label":"近5个交易日大盘档位："+summary,class:"regime-chart"});
+  // Row names are HTML beside the drawing so they keep their size on a narrow screen.
+  const labels=elt("div",undefined,"regime-levels");labels.setAttribute("aria-hidden","true");
   for (const [index,level] of levels.entries()) {
-    svg.append(panoramaSvg("rect",{x:left,y:rowHeight*index+2,width:width-left,height:rowHeight-4,rx:4,class:"regime-band regime-band-"+regimes[level][1]}));
-    const label=panoramaSvg("text",{x:left-10,y:rowHeight*(index+.5)+4,"text-anchor":"end",class:"regime-level"});label.textContent=regimes[level][0];svg.append(label);
+    svg.append(panoramaSvg("rect",{x:0,y:rowHeight*index+2,width,height:rowHeight-4,rx:4,class:"regime-band regime-band-"+regimes[level][1]}));
+    labels.append(elt("span",regimes[level][0]));
   }
   // Only consecutive judged sessions are joined; a gap stays visible as a gap.
   for (let index=1;index<days.length;index++) {
@@ -521,9 +523,7 @@ function renderMarketRegime(data) {
   }
   for (const [index,day] of days.entries()) {
     if (regimes[day.market_regime]) svg.append(panoramaSvg("circle",{cx:x(index),cy:y(day.market_regime),r:8,class:"regime-dot regime-dot-"+regimes[day.market_regime][1]}));
-    else {
-      const gap=panoramaSvg("text",{x:x(index),y:rowHeight*1.5+4,"text-anchor":"middle",class:"regime-gap"});gap.textContent="数据不足";svg.append(gap);
-    }
+    else svg.append(panoramaSvg("line",{x1:x(index),y1:8,x2:x(index),y2:rowHeight*3-8,class:"regime-gap"}));
   }
   const strip=elt("div",undefined,"regime-days");strip.style.setProperty("--regime-days",String(days.length));
   for (const day of days) {
@@ -531,13 +531,15 @@ function renderMarketRegime(data) {
     cell.append(elt("span",day.trade_date.slice(5),"numeric muted"),elt("strong",name,"regime-text-"+tone),
       elt("small","量能比 "+(day.volume_ratio==null?"—":Number(day.volume_ratio).toFixed(2)),"numeric muted"));
     for (const item of day.indexes || []) {
-      const position=item.above_ma20==null?"待补":(item.above_ma20?"站上":"低于")+"MA20 · 均线"+(item.ma20_rising?"向上":"未向上");
-      cell.append(elt("small",item.name+" "+position,"muted"));
+      const line=elt("small",undefined,"muted regime-index");
+      line.append(elt("span",item.name),elt("span",item.above_ma20==null?"待补":(item.above_ma20?"MA20上方":"MA20下方")+(item.ma20_rising?" ↗":" ↘")));
+      line.title=item.above_ma20==null?item.name+"：数据待补":item.name+" 收盘 "+item.close+"，MA20 "+item.ma20+"，均线较5个交易日前"+(item.ma20_rising?"上升":"未上升");
+      cell.append(line);
     }
     strip.append(cell);
   }
-  const chart=elt("div",undefined,"regime-figure");chart.append(svg,strip);
-  section.append(chart,elt("p","每个交易日收盘后判定一次，用于下一交易日买入成交的 v2 周期；量能比为近5日均额除以近20日均额。数据不足的交易日不判档。","panorama-note"),panoramaSource(data,true));
+  const chart=elt("div",undefined,"regime-figure");chart.append(labels,svg,strip);
+  section.append(chart,elt("p","每个交易日收盘后判定一次，用于下一交易日买入成交的 v2 周期。量能比为近5日均额除以近20日均额；↗ / ↘ 表示 MA20 较5个交易日前上升 / 未上升。数据不足的交易日不判档。","panorama-note"),panoramaSource(data,true));
   return section;
 }
 function renderMarketTurnover(data) {

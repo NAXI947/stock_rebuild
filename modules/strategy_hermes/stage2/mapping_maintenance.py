@@ -394,6 +394,19 @@ def _priorities(ledger, now=None):
     return held, [s for s in dict.fromkeys(sectors + active) if isinstance(s, str)]
 
 
+def _source_missing_since(prior, diagnostic, now):
+    """Same empty source window seen again on a later trade date.
+
+    One empty reply stays NOT_PUBLISHED and keeps its same-day retry slot.
+    """
+    since = prior.get('source_missing_since') or prior.get('last_failed_trade_date')
+    if (diagnostic.get('error_kind') != 'NOT_PUBLISHED'
+            or prior.get('error_kind') not in ('NOT_PUBLISHED', 'CONFIRMED_SOURCE_MISSING')
+            or not isinstance(since, str) or since >= now.date().isoformat()):
+        return None
+    return since
+
+
 def _weight_targets(mapping, held, sectors, now, day, policy):
     from ..product_materials import material_seed_config
     from .penetration import _dated_weights, _explicit_relations, _formal_members
@@ -650,9 +663,31 @@ def _exchange_basis(ledger, index, first, day, now, config, request, checkpoint,
     complete_cni_basis(basis, index)
     receipt = save_reference(ledger, 'index_weight', {'index_code':source_code,'maintenance_day':now.date().isoformat()},
                              body['rows'], normalized)
-    basis['absolute_weight_proof'] = dict(scope='FULL_INDEX_ABSOLUTE', index_code=index,
-                                         as_of_date=basis['as_of_date'], source_ref=receipt['batch'])
     return basis, available, receipt
+
+
+def _absolute_weight_proof(basis, index, receipt, official_codes=None):
+    """Batch facts showing un-normalised full-index weights, or None.
+
+    A total inside the source range is not such a fact by itself: a subset that
+    was re-normalised also sums to one, so a partial batch needs the official
+    constituent set (or count) to show members are missing and weight is left.
+    """
+    codes = {row['code'] for row in basis['rows']}
+    total = sum((decimal(row['weight']) for row in basis['rows']), Decimal(0))
+    expected = (basis.get('index_identity') or {}).get('expected_count')
+    short = total < 1 - Decimal('.005')
+    if basis.get('complete') is True:
+        evidence, official = 'COMPLETE_OFFICIAL_SET', len(codes)
+    elif official_codes is not None and codes < set(official_codes) and short:
+        evidence, official = 'OFFICIAL_SET_SUBSET', len(set(official_codes))
+    elif official_codes is None and type(expected) is int and len(codes) < expected and short:
+        evidence, official = 'OFFICIAL_COUNT_SUBSET', expected
+    else:
+        return None
+    return dict(scope='FULL_INDEX_ABSOLUTE', index_code=index, as_of_date=basis['as_of_date'],
+                source_ref=receipt['batch'], evidence=evidence, row_count=len(codes),
+                official_count=official, weight_total=str(total))
 
 
 def _maintain(ledger, mapping, market, calendar, config, captures, now, request, checkpoint, mode,
@@ -698,6 +733,7 @@ def _maintain(ledger, mapping, market, calendar, config, captures, now, request,
         first = day - timedelta(days=62)
         for index in targets:
             key = 'weights:'+index
+            prior = dict(policy.pending.get(key) or {}) if policy else {}
             if policy and not policy.begin(key, day.isoformat()):
                 continue
             try:
@@ -711,6 +747,7 @@ def _maintain(ledger, mapping, market, calendar, config, captures, now, request,
                     if policy:
                         policy.failed(key, dict(error_kind='DATE_MISMATCH'))
                     continue
+                official = None
                 if not basis['complete'] and not cni_code(index):
                     try:
                         scope = dict(index=index, period=now.date().isoformat())
@@ -732,14 +769,24 @@ def _maintain(ledger, mapping, market, calendar, config, captures, now, request,
                                 raise SourceFailure.from_receipt(response)
                             evidence, _ = _read_market(ledger,response['receipt']['batch'])
                         known = sum((decimal(r['weight']) for r in basis['rows']),Decimal(0))
+                        dated = date.fromisoformat(basis['as_of_date']) <= date.fromisoformat(evidence['as_of']) <= day
                         complete = (set(evidence['codes']) == {r['code'] for r in basis['rows']}
-                                    and date.fromisoformat(basis['as_of_date']) <= date.fromisoformat(evidence['as_of']) <= day
-                                    and abs(known-1) <= Decimal('.005'))
+                                    and dated and abs(known-1) <= Decimal('.005'))
+                        if dated:
+                            official = evidence['codes']
                         if complete:
                             basis.update(complete=True,completeness_basis='CSI_SET_MATCH',
                                          csi_evidence={k:v for k,v in evidence.items() if k!='codes'})
                     except (SourceFailure,OSError,ValueError,TypeError,KeyError,psycopg.Error) as exc:
                         _record(summary,'weight_evidence',index,'NOT_CHECKED',error=type(exc).__name__, **error_diagnostic(exc))
+                proof = _absolute_weight_proof(basis, index, receipt, official)
+                inherited = basis.get('absolute_weight_proof')
+                if proof:
+                    basis['absolute_weight_proof'] = proof
+                elif not (isinstance(inherited, dict) and inherited.get('evidence')
+                          and inherited.get('as_of_date') == basis['as_of_date']):
+                    # Unchanged rows keep a proof derived from them; a legacy blanket mark is not one.
+                    basis.pop('absolute_weight_proof', None)
                 if old.get('complete') is True and basis.get('complete') is not True:
                     # A new partial source is retained for audit/next review;
                     # it does not erase the last verified calculation basis.
@@ -756,7 +803,11 @@ def _maintain(ledger, mapping, market, calendar, config, captures, now, request,
                 same = (basis.get('as_of_date') == old.get('as_of_date') and basis.get('rows') == old.get('rows')
                         and basis.get('complete') == old.get('complete')
                         and basis.get('index_identity') == old.get('index_identity')
-                        and bool(basis.get('absolute_weight_proof')) == bool(old.get('absolute_weight_proof')))
+                        and bool(basis.get('absolute_weight_proof')) == bool(old.get('absolute_weight_proof'))
+                        # Only a partial basis reads its proof, so only there must a derived one be stored.
+                        and (basis.get('complete') is True
+                             or (basis.get('absolute_weight_proof') or {}).get('evidence')
+                             == (old.get('absolute_weight_proof') or {}).get('evidence')))
                 if not same:
                     basis.update(available_at=available.isoformat(),source_batches=[receipt['batch']])
                     updated['weights'][index] = basis
@@ -770,6 +821,9 @@ def _maintain(ledger, mapping, market, calendar, config, captures, now, request,
                         policy.failed(key, dict(error_kind='FIELD_MISMATCH'))
             except (SourceFailure,OSError,ValueError,TypeError,KeyError,psycopg.Error) as exc:
                 diagnostic = error_diagnostic(exc)
+                missing_since = _source_missing_since(prior, diagnostic, now)
+                if missing_since:
+                    diagnostic.update(error_kind='CONFIRMED_SOURCE_MISSING', source_missing_since=missing_since)
                 _record(summary,'weights',index,'RETAINED',error=type(exc).__name__, **diagnostic)
                 if policy:
                     policy.failed(key, diagnostic)

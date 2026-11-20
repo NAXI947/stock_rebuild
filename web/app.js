@@ -290,6 +290,9 @@ function reportDetail(panel,row,refreshReport) {
   const etfStatistics=row.input_meta?.representation?.statistics;
   if (etfStatistics) panel.append(metrics(etfCoverageRows(etfStatistics)));
   const names = Object.fromEntries((data.sectors || []).map(s=>["kaipanla:"+s.kaipanla_plate_id,s.sector_name]));
+  const withoutCarrier=Object.entries(row.input_meta?.representation?.pairs || {})
+    .filter(([,group])=>!Object.keys(group || {}).length).map(([sid])=>names[sid] || sid);
+  if (withoutCarrier.length) panel.append(elt("p","当前资料范围未找到："+withoutCarrier.join("、"),"muted"));
   const phaseLabels = {NEW:"新增",MAINTAIN:"维持",STRENGTHEN:"加强",WEAKEN:"减弱",RETREAT:"退潮",UNKNOWN:"待核实"};
   panel.append(table(["板块","轮动判断","证据"],(data.sectors||[]).map(s=>{
     const decision=row.sectors?.["kaipanla:"+s.kaipanla_plate_id];

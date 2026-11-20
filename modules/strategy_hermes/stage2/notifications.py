@@ -62,6 +62,9 @@ def _display_sector(sid, state, rows):
     return _text(row.get("sector_name"), 28) or sid
 
 
+NO_CARRIER_IN_SCOPE = "当前资料范围未找到"
+
+
 def _short_list(values, missing, limit):
     if not values:
         return missing
@@ -679,6 +682,11 @@ def visual_brief_sections(slot, report, orders, *, preview=False):
             f"配对 {pairs['selectable']}/{pairs['total']} · 指数 {indexes['weights_available']}/{indexes['total']} · "
             f"ETF {products['selectable']}/{products['total']} · 本轮节点 {nodes_count['total']}\n"
             f"可选配对　主干 {tiers['core']} · 低暴露 {tiers['below_core']} · 未知 {tiers['unknown']}")
+        # Saved pair groups are the one scope: an empty group means this mapping holds no carrier.
+        saved_pairs = meta["representation"].get("pairs") or {}
+        without_carrier = [names[sid] for sid in ranked if sid in saved_pairs and not saved_pairs[sid]]
+        if without_carrier:
+            candidate_text += f"\n{NO_CARRIER_IN_SCOPE}　{_short_list(without_carrier, '', 6)}"
     stock_groups = [f"{names[sid]} {_short_list(meta['stock_watchlist'][sid], '', 4)}"
                     for sid in ranked if sid in meta.get("stock_watchlist", {}) and states[sid]["state"] in ("UP", "HOLD")]
     scope = meta.get("market_scope")

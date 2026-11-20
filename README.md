@@ -13,6 +13,8 @@ A 股板块轮动研究、ETF 模拟交易、手动回测和实盘成交记账�
 
 LEFT/RIGHT 支持按交易日全市场批量补采、成功页复用和分块重算。Web 按原备份恢复独立的五类更新页，操作见 [数据更新与补采](docs/data-updates.md)；历史展示见 [LEFT/RIGHT 与热门板块](docs/left-right-hot-sectors.md)。
 
+ETF V3.2 的代表性规则见 [ETF V3.2 调测说明](docs/etf-v3.2.md)。成员数不少于 300 的板块须先登记产业归属才能新开仓，审核口径和发布步骤见 [大板块产业归属登记](docs/etf-taxonomy-registration.md)；产品资料准入见 [产品资料核验](docs/etf-product-verification.md)。
+
 安装 `requirements-stage2.lock` 中的锁定依赖。完整回归使用独立的 PostgreSQL 和 Redis 测试实例，启动配置见 [验收构建](.github/workflows/verify-build.yml)。冻结回放可单独运行：
 
 ```bash

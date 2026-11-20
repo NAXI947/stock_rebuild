@@ -70,6 +70,8 @@ jobs:
           STAGE2_MIGRATION_ENV_FILE="$STAGE2_TEST_ENV_FILE" \
             python -B -m unittest discover -s tests -p test_migration_upgrade.py -q
           python -B -m unittest discover -s tests -q
+          # Shares the isolated queue with the suite above, so it runs after it.
+          PYTHONPATH=tests python -B -m unittest tools.etf_v32_acceptance -q
       - name: Check the frontend
         run: |
           node --check web/app.js

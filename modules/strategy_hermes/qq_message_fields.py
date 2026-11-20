@@ -19,7 +19,7 @@ ITEM_STATES = {
     'RETAINED': '沿用旧版', 'PENDING': '资料待补', 'UNVERIFIED': '待核验',
 }
 ERRORS = {
-    'NOT_PUBLISHED': '来源尚未发布', 'CONNECTION_FAILED': '来源连接失败',
+    'NOT_PUBLISHED': '来源尚未发布', 'CONFIRMED_SOURCE_MISSING': '来源确认缺失', 'CONNECTION_FAILED': '来源连接失败',
     'HTTP_STATUS': '来源HTTP响应异常', 'PROVIDER_STATUS': '来源业务状态异常',
     'FIELD_MISMATCH': '来源字段不匹配', 'DATE_MISMATCH': '来源日期不匹配',
     'INVALID_JSON': '来源响应格式异常', 'PAGE_MISMATCH': '分页数据不一致',

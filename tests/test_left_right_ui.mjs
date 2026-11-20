@@ -75,6 +75,23 @@ test("ETF report renders the five saved counting dimensions and their selectable
   assert.equal(calls.length,0);
 });
 
+test("report names a sector whose saved pair group is empty as not found in the current material scope",()=>{
+  const {context,calls,root}=harness(()=>{throw new Error("saved report must not recollect data");});
+  const statistics={sectors:{total:2,with_selectable:1},indexes:{total:1,weights_available:1},
+    pairs:{total:1,selectable:1,selectable_by_tier:{core:1,below_core:0,unknown:0}},
+    products:{total:1,selectable:1},orders:{total:0}};
+  const report={raw:JSON.stringify({sectors:[{kaipanla_plate_id:"801027",sector_name:"银行"},
+      {kaipanla_plate_id:"801001",sector_name:"芯片"}]}),round_slot:"09:35",status:"PARTIAL",
+    input_meta:{representation:{statistics,pairs:{"kaipanla:801027":{"512800.SH":{}},"kaipanla:801001":{}}}}};
+  context.reportDetail(root,report,()=>{});
+  assert.ok(root.textContent.includes("当前资料范围未找到：芯片"),root.textContent);
+  assert.ok(!root.textContent.includes("全市场无") && !root.textContent.includes("纯游资"));
+  delete report.input_meta.representation.pairs;
+  context.reportDetail(root,report,()=>{});
+  assert.ok(!root.textContent.includes("当前资料范围未找到"));
+  assert.equal(calls.length,0);
+});
+
 test("history keeps zero scores, breaks at missing days and version changes, and respects cutoff",()=>{
   const {context}=harness(()=>{});
   const data={trade_dates:[...days,"2026-11-18"],items:[

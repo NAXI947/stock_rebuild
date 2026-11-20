@@ -89,6 +89,34 @@ class CatalogAndWeights(TestCase):
         self.assertLessEqual(len(targets),maintenance.MAX_SECTORS)
 
 
+    def test_index_weight_reserved_rotation_advances_ordinary_targets_under_priority_pressure(self):
+        """T26-a for index weights: more held indexes than slots never starve the due ordinary ones."""
+        from modules.strategy_hermes.stage2.reference_policy import ReferencePolicy
+        held = ['5100%02d.SH' % n for n in range(12)]
+        ordinary = ['000%03d.SH' % n for n in range(900, 906)]
+        data = dict(version='rotation', sectors={}, weights={}, products={
+            **{code: dict(index_code='000%03d.SH' % n, list_status='L') for n, code in enumerate(held)},
+            **{'5120%02d.SH' % n: dict(index_code=index, list_status='L') for n, index in enumerate(ordinary)}})
+        priority = {data['products'][code]['index_code'] for code in held}
+        advanced = set()
+        with patch.dict('os.environ', {'ETF_REPRESENTATIVENESS_MODE': 'V2'}):
+            for offset in range(len(priority) + len(ordinary)):
+                day = (NOW + timedelta(days=offset)).date()
+                selected = maintenance._weight_targets(data, held, [], NOW, day, None)
+                self.assertEqual(len(selected), maintenance.MAX_INDEXES)
+                self.assertEqual(len(set(selected)), maintenance.MAX_INDEXES)
+                self.assertEqual(len(priority.intersection(selected)), maintenance.MAX_INDEXES - 2)
+                self.assertEqual(len(set(ordinary).intersection(selected)), 2)
+                advanced.update(set(ordinary).intersection(selected))
+            self.assertEqual(advanced, set(ordinary))
+            policy = ReferencePolicy(data, NOW, 'market')
+            selected = maintenance._weight_targets(data, held, [], NOW, NOW.date(), policy)
+        deferred = {key for key, value in policy.pending.items() if value['error_kind'] == 'DEFERRED'}
+        self.assertEqual(len(deferred), maintenance.MAX_INDEXES)
+        self.assertTrue(deferred.isdisjoint('weights:' + index for index in selected))
+        self.assertTrue(deferred.intersection('weights:' + index for index in ordinary))
+
+
 class FakeCursor:
     def __init__(self,rows): self.rows=rows
     def fetchone(self): return self.rows[0] if self.rows else None
@@ -153,6 +181,118 @@ class PartialMaintenance(TestCase):
         self.assertTrue(status['changed'])
         self.assertEqual(result['member_maintenance']['priority_after'], SID)
         self.assertEqual(status['status'],'PARTIAL')
+
+    def test_repeated_empty_weight_window_becomes_known_missing_with_same_day_cooldown(self):
+        ledger=SimpleNamespace(ns='test',_connect=FakeConnection)
+        calendar=['2026-11-13','2026-11-16','2026-11-17','2026-11-18','2026-11-19']
+        requested=[]
+        def obtain(store,api,params,*args,**kwargs):
+            requested.append(api)
+            raise SourceFailure('source data not published yet',kind='NOT_PUBLISHED')
+        def run(current,day,hour,minute,mode):
+            requested.clear()
+            now=NOW.replace(day=day,hour=hour,minute=minute)
+            with patch.object(maintenance,'_priorities',return_value=([ETF],[SID])),\
+                 patch.object(maintenance,'stock_identity',return_value=({},{})),\
+                 patch.object(maintenance,'_hydrate_members'),patch.object(maintenance,'_catalog_maintenance'),\
+                 patch.object(maintenance,'_members'),patch.object(maintenance,'_aum_maintenance'),\
+                 patch.object(maintenance,'_obtain',side_effect=obtain):
+                result,status=maintenance.maintain(ledger,current,None,calendar,'private',None,now,
+                                                    lambda *a:None,lambda:None,mode=mode)
+            return result,status,result['reference_maintenance']['pending'].get('weights:'+INDEX),list(requested)
+        current=mapping();current['weights'][INDEX]['complete']=False
+        current,status,pending,calls=run(current,17,10,0,'market')
+        self.assertEqual((pending['error_kind'],calls),('NOT_PUBLISHED',['index_weight']))
+        self.assertEqual(status['weights'][INDEX]['error_kind'],'NOT_PUBLISHED')
+        # A single empty reply keeps its same-day retry slot.
+        current,status,pending,calls=run(current,17,14,15,'retry')
+        self.assertEqual((pending['error_kind'],pending['attempts'],calls),('NOT_PUBLISHED',2,['index_weight']))
+        self.assertNotIn('source_missing_since',pending)
+        current,status,pending,calls=run(current,18,10,0,'market')
+        self.assertEqual((pending['error_kind'],pending['source_missing_since'],calls),
+                         ('CONFIRMED_SOURCE_MISSING','2026-11-17',['index_weight']))
+        self.assertEqual(status['weights'][INDEX]['error_kind'],'CONFIRMED_SOURCE_MISSING')
+        # Known missing: the same day's retry slot spends no request on it.
+        current,status,pending,calls=run(current,18,14,15,'retry')
+        self.assertEqual((pending['error_kind'],pending['attempts'],calls),('CONFIRMED_SOURCE_MISSING',3,[]))
+        # The next trade date checks the source again.
+        current,status,pending,calls=run(current,19,10,0,'market')
+        self.assertEqual((pending['error_kind'],pending['source_missing_since'],pending['attempts'],calls),
+                         ('CONFIRMED_SOURCE_MISSING','2026-11-17',4,['index_weight']))
+
+    def test_connection_failures_never_become_known_missing(self):
+        prior=dict(error_kind='CONNECTION_FAILED',last_failed_trade_date='2026-11-13')
+        self.assertIsNone(maintenance._source_missing_since(prior,dict(error_kind='NOT_PUBLISHED'),NOW))
+        prior['error_kind']='NOT_PUBLISHED'
+        self.assertIsNone(maintenance._source_missing_since(prior,dict(error_kind='CONNECTION_FAILED'),NOW))
+        self.assertEqual(maintenance._source_missing_since(prior,dict(error_kind='NOT_PUBLISHED'),NOW),'2026-11-13')
+        prior['last_failed_trade_date']=NOW.date().isoformat()
+        self.assertIsNone(maintenance._source_missing_since(prior,dict(error_kind='NOT_PUBLISHED'),NOW))
+
+    def weight_run(self,weights,official,*,previous=None):
+        """One close maintenance with a real index_weight batch and an optional official CSI set."""
+        ledger=SimpleNamespace(ns='test',_connect=FakeConnection)
+        current=mapping();current['weights']={INDEX:previous} if previous else {}
+        rows=[dict(index_code=INDEX,con_code=code,trade_date='20261030',weight=value) for code,value in weights.items()]
+        evidence=dict(codes=sorted(official),as_of='2026-11-13',url='https://www.csindex.com.cn/cons.xls') if official else None
+        def request(source,scope,operation):
+            return dict(status='FAILED',error_kind='CONNECTION_FAILED')
+        with patch.object(maintenance,'_priorities',return_value=([ETF],[SID])),\
+             patch.object(maintenance,'stock_identity',return_value=({},{})),\
+             patch.object(maintenance,'_catalog_maintenance'),patch.object(maintenance,'_members'),\
+             patch.object(maintenance,'_obtain',return_value=({'rows':rows},NOW)),\
+             patch.object(maintenance,'save_reference',return_value={'batch':'weight-batch'}),\
+             patch.object(maintenance,'_cached',return_value=('constituents',) if evidence else None),\
+             patch.object(maintenance,'_read_market',return_value=(evidence,NOW)):
+            result,status=maintenance.maintain(ledger,current,None,['2026-11-13','2026-11-16'],
+                                                'private',None,NOW,request,lambda:None)
+        return result['weights'].get(INDEX) or {},status
+
+    def test_absolute_weight_proof_needs_batch_facts_not_only_a_total_in_range(self):
+        full={'600000.SH':'60','600036.SH':'40'}
+        basis,_=self.weight_run(full,set(full))
+        self.assertTrue(basis['complete'])
+        self.assertEqual(basis['absolute_weight_proof']['evidence'],'COMPLETE_OFFICIAL_SET')
+        # Official set shows a missing member and the batch leaves weight for it.
+        basis,_=self.weight_run({'600000.SH':'60'},set(full))
+        self.assertFalse(basis['complete'])
+        self.assertEqual({k:basis['absolute_weight_proof'][k] for k in
+                          ('scope','index_code','as_of_date','source_ref','evidence','row_count','official_count','weight_total')},
+            dict(scope='FULL_INDEX_ABSOLUTE',index_code=INDEX,as_of_date='2026-10-30',source_ref='weight-batch',
+                 evidence='OFFICIAL_SET_SUBSET',row_count=1,official_count=2,weight_total='0.6'))
+        for name,weights,official in (
+                ('no official set this run',{'600000.SH':'60'},None),
+                ('subset already sums to one',{'600000.SH':'100'},set(full)),
+                ('constituent outside the official set',{'600000.SH':'60','000001.SZ':'10'},set(full))):
+            with self.subTest(name):
+                basis,status=self.weight_run(weights,official)
+                self.assertFalse(basis['complete'])
+                self.assertNotIn('absolute_weight_proof',basis)
+                self.assertEqual((status.get('weight_evidence') or {}).get(INDEX,{}).get('status'),
+                                 None if official else 'NOT_CHECKED')
+
+    def test_unchanged_rows_drop_a_legacy_blanket_proof_but_keep_a_derived_one(self):
+        rows=[dict(code='600000.SH',weight='0.6',mainboard=None,mainboard_source_batch=None)]
+        old=dict(as_of_date='2026-10-30',rows=rows,complete=False,completeness_basis='SOURCE_WEIGHTS_UNVERIFIED',
+                 source='tushare:index_weight',available_at='2026-11-13T10:00:00+08:00',source_batches=['old'])
+        legacy=dict(scope='FULL_INDEX_ABSOLUTE',index_code=INDEX,as_of_date='2026-10-30',source_ref='old')
+        basis,_=self.weight_run({'600000.SH':'60'},None,previous={**old,'absolute_weight_proof':legacy})
+        self.assertNotIn('absolute_weight_proof',basis)
+        derived={**legacy,'evidence':'OFFICIAL_SET_SUBSET','row_count':1,'official_count':2,'weight_total':'0.6'}
+        basis,_=self.weight_run({'600000.SH':'60'},None,previous={**old,'absolute_weight_proof':derived})
+        self.assertEqual(basis['absolute_weight_proof'],derived)
+
+    def test_cni_partial_proof_uses_documented_sample_count(self):
+        receipt={'batch':'cni-batch'}
+        basis=dict(as_of_date='2026-10-30',complete=False,index_identity=dict(expected_count=3),
+                   rows=[dict(code='300750.SZ',weight='0.5'),dict(code='300059.SZ',weight='0.2')])
+        proof=maintenance._absolute_weight_proof(basis,'399006.SZ',receipt)
+        self.assertEqual((proof['evidence'],proof['row_count'],proof['official_count'],proof['weight_total']),
+                         ('OFFICIAL_COUNT_SUBSET',2,3,'0.7'))
+        basis['rows'].append(dict(code='300760.SZ',weight='0.2'))
+        self.assertIsNone(maintenance._absolute_weight_proof(basis,'399006.SZ',receipt))
+        basis['rows'][-1:]=[];basis['rows'][0]['weight']='0.8'
+        self.assertIsNone(maintenance._absolute_weight_proof(basis,'399006.SZ',receipt))
 
     def test_preopen_only_requests_size_and_preserves_direction_related_mapping(self):
         original=mapping()

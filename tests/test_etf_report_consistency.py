@@ -21,6 +21,25 @@ class ReportConsistency(TestCase):
         self.assertIn('其余依据见工作台报告', summary)
         self.assertNotIn('其他详细证据', summary)
 
+    def test_sector_without_a_saved_pair_is_named_as_not_found_in_current_material_scope(self):
+        entry = report()
+        other = 'kaipanla:801001'
+        raw = json.loads(entry['raw'])
+        raw['sectors'].append({'sector_name': '芯片'})
+        entry['raw'] = json.dumps(raw)
+        entry['sectors'][other] = dict(entry['sectors'][SID], row=len(raw['sectors']) - 1)
+        entry['input_meta']['representation'] = dict(pairs={SID: {ETF: {}}, other: {}}, statistics=dict(
+            sectors=dict(total=2, with_selectable=1), indexes=dict(total=1, weights_available=1),
+            pairs=dict(total=1, selectable=1, selectable_by_tier=dict(core=1, below_core=0, unknown=0)),
+            products=dict(total=1, selectable=1), orders=dict(total=0)))
+        text = visual_brief_sections('13:05', entry, [])['etf_candidates']
+        self.assertTrue(text.endswith('当前资料范围未找到　芯片'), text)
+        for phrase in ('全市场无', '纯游资'):
+            self.assertNotIn(phrase, text)
+        # Reports saved before pair groups were projected stay as they were.
+        del entry['input_meta']['representation']['pairs']
+        self.assertNotIn('当前资料范围未找到', visual_brief_sections('13:05', entry, [])['etf_candidates'])
+
     def test_catalog_and_board_gaps_are_separate_from_distinct_etf_rejections(self):
         entry = report()
         entry['input_meta']['etf_recommendations'] = dict(sectors={SID:dict(

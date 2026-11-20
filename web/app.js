@@ -528,8 +528,12 @@ function renderMarketRegime(data) {
   const strip=elt("div",undefined,"regime-days");strip.style.setProperty("--regime-days",String(days.length));
   for (const day of days) {
     const [name,tone]=regimes[day.market_regime] || ["数据不足","missing"],cell=elt("div",undefined,"regime-day");
-    cell.append(elt("span",day.trade_date.slice(5),"numeric muted"),elt("strong",name,"regime-text-"+tone),
-      elt("small","量能比 "+(day.volume_ratio==null?"—":Number(day.volume_ratio).toFixed(2)),"numeric muted"));
+    const ratio=elt("small",undefined,"numeric muted regime-ratio");
+    ratio.append(elt("span","量能比"),elt("span",day.volume_ratio==null?"—":Number(day.volume_ratio).toFixed(2)));
+    const label=elt("strong",undefined,"regime-text-"+tone);label.setAttribute("aria-label",name);
+    // A phone column fits two characters: the first two name the regime on their own.
+    label.append(elt("span",name.slice(0,2)),elt("span",name.slice(2),"regime-name-rest"));
+    cell.append(elt("span",day.trade_date.slice(5),"numeric muted"),label,ratio);
     for (const item of day.indexes || []) {
       const line=elt("small",undefined,"muted regime-index");
       line.append(elt("span",item.name),elt("span",item.above_ma20==null?"待补":(item.above_ma20?"MA20上方":"MA20下方")+(item.ma20_rising?" ↗":" ↘")));

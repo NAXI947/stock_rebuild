@@ -256,6 +256,29 @@ class ReportExits(TestCase):
         self.assertEqual(repeated["weak_trade_days"], [DAYS[1]])
         self.assertEqual(trail(feed(repeated, (2, "09:35", "WEAK")))[-1], ("EXIT", "PENDING", "AI_WEAK_CROSS_DAY_2"))
 
+    def test_v2_1_hold_keeps_the_weak_days_and_only_up_clears_them(self):
+        rules = Rules.v2_1("DUAL")
+        held = feed(opened(RANGE, "0.025", rules=rules), (1, "10:35", "WEAK"), (2, "10:35", "HOLD"))
+        self.assertEqual((held["status"], held["weak_trade_days"]), ("OPEN", [DAYS[1]]))
+        feed(held, (3, "09:35", "WEAK"))
+        self.assertEqual((held["status"], held["weak_trade_days"], trail(held)), ("WAIT_EXIT", [DAYS[1], DAYS[3]],
+                         [("REDUCE", "SUPERSEDED", "AI_FIRST_WEAK_REDUCE"), ("EXIT", "PENDING", "AI_WEAK_CROSS_DAY_2")]))
+        up = feed(opened(RANGE, "0.025", rules=rules), (1, "10:35", "WEAK"), (2, "10:35", "UP"))
+        self.assertEqual(up["weak_trade_days"], [])
+        feed(up, (3, "09:35", "WEAK"))
+        self.assertEqual((up["status"], up["weak_trade_days"], trail(up)),
+                         ("OPEN", [DAYS[3]], [("REDUCE", "PENDING", "AI_FIRST_WEAK_REDUCE")]))
+        unknown = feed(opened(RANGE, "0.025", rules=rules), (1, "10:35", "WEAK"), (2, "10:35", "UNKNOWN"))
+        self.assertEqual(unknown["weak_trade_days"], [DAYS[1]])
+        # An UP that only repeats earlier evidence is not a new judgement either.
+        echo = report(2, "13:05", "UP")
+        echo["sectors"][SECTOR].update(duplicate_evidence=True)
+        apply_report(unknown, echo)
+        self.assertEqual(unknown["weak_trade_days"], [DAYS[1]])
+        # The same reports under v2: the HOLD clears the first weak day and the position stays open.
+        old = feed(opened(RANGE, "0.025"), (1, "10:35", "WEAK"), (2, "10:35", "HOLD"), (3, "09:35", "WEAK"))
+        self.assertEqual((old["status"], old["weak_trade_days"]), ("OPEN", [DAYS[3]]))
+
     def test_retreat_clears_and_waiting_buy_is_cancelled(self):
         cycle = feed(opened(RANGE, "0.025"), (1, "09:35", "1.010"), (1, "10:35", "EXIT"))
         order = pending(cycle)
@@ -307,6 +330,23 @@ class Versions(TestCase):
         with self.assertRaises(ValueError):
             Rules(time_exit_enabled=True)
 
+    def test_v2_1_is_v2_with_the_hold_rule_and_v2_keeps_its_stored_snapshot(self):
+        old, new = Rules.v2("DUAL").snapshot(), Rules.v2_1("DUAL").snapshot()
+        self.assertNotIn("hold_clears_weak_days", old)
+        self.assertEqual(new, old | dict(version="hermes_signal_cycle_v2_1", hold_clears_weak_days=False))
+        self.assertEqual(Rules(**json.loads(encode(new))), Rules.v2_1("DUAL"))
+        # A stored v2 snapshot has no such key and reads back as the rule that still clears on HOLD.
+        stored = Rules(**json.loads(encode(old)))
+        self.assertEqual((stored, stored.hold_clears_weak_days), (Rules.v2("DUAL"), True))
+        kept = feed(opened(RANGE, "0.025", rules=stored), (1, "10:35", "WEAK"), (2, "10:35", "HOLD"))
+        self.assertEqual(kept["weak_trade_days"], [])
+        for values in (dict(hold_clears_weak_days=False), dict(version="hermes_signal_cycle_v2_1"),
+                       dict(version="hermes_signal_cycle_v2_1", hold_clears_weak_days=0)):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                Rules.v2("DUAL", **values)
+        with self.assertRaises(ValueError):
+            Rules(hold_clears_weak_days=False)
+
     def test_t20_rule_switch_accepts_only_known_versions(self):
         from modules.strategy_hermes.stage2.settings import Settings
         base = dict(APP_ENV="test", DATABASE_URL="postgresql://u:p@127.0.0.1:54320/stock_v4_test",
@@ -318,7 +358,11 @@ class Versions(TestCase):
         for name in ("v2", "hermes_signal_cycle_v2"):
             chosen = Settings.from_values(base | dict(MODEL_EVALUATION_RULE=name, REGIME_MODE="SINGLE")).rules()
             self.assertEqual(chosen, Rules.v2("SINGLE"))
+        for name in ("v2.1", "hermes_signal_cycle_v2_1"):
+            chosen = Settings.from_values(base | dict(MODEL_EVALUATION_RULE=name, REGIME_MODE="DUAL")).rules()
+            self.assertEqual(chosen, Rules.v2_1("DUAL"))
         for values in (dict(MODEL_EVALUATION_RULE="hermes_signal_cycle_v3"), dict(MODEL_EVALUATION_RULE="v2"),
+                       dict(MODEL_EVALUATION_RULE="v2.1"), dict(MODEL_EVALUATION_RULE="v2.0.1", REGIME_MODE="DUAL"),
                        dict(MODEL_EVALUATION_RULE="v2", REGIME_MODE="AUTO"), dict(REGIME_MODE="dual")):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 Settings.from_values(base | values)
@@ -391,6 +435,50 @@ class PostgresVersions(TestCase):
         self.assertEqual((saved, versions), ([("STOP_LOSS_HIT", "9.60")], [("hermes_signal_cycle_v2",)]))
         with self.assertRaisesRegex(ValueError, "changed rules require a new version"):
             self.store_events([], Rules.v2("DUAL", time_exit_enabled=False))
+
+    def test_entry_observation_is_read_from_saved_reports_and_never_changes_orders(self):
+        import test_stage1 as stage1
+        plan = dict(market_regime=BEAR, flags=[], regime_as_of=stage1.D1, atr20="0.055", atr_as_of=stage1.D1)
+        self.store._exit_inputs = lambda db, code, at, calendar, rules: plan
+        rules = Rules.v2_1("DUAL")
+        events = [stage1.report("r1", stage1.D1, "09:35", [(stage1.A, "减弱")]),
+                  stage1.report("r2", stage1.D1, "10:35", [(stage1.A, "新增")]),
+                  stage1.report("entry", stage1.D1, "13:05", [(stage1.A, "加强")], [(stage1.ETF, stage1.A, 1)])]
+        self.store_events(events, rules)
+        with self.store._connect() as conn:
+            # The publisher adds the slot and the input facts to the saved report after the ledger has applied it.
+            conn.execute("""UPDATE events SET payload=payload||%s::jsonb WHERE ns=%s AND kind='report' AND id='entry'""",
+                         (encode(dict(round_slot="13:05", input_meta=dict(source_observed_at=stage1.D1 + "T13:05:11+08:00",
+                             market_scope=dict(board_counts=dict(up=30, down=160, flat=10, unknown=3))))),
+                          self.settings.namespace))
+        self.store_events([stage1.quote("p1", stage1.D1, "13:06", "10.00")], rules)
+        plain = self.store.inspect()["cycles"][0]
+        self.assertNotIn("entry", plain)          # only the live ledger records it
+        from modules.strategy_hermes.stage2.entry_observation import read
+        with self.store._connect() as conn:
+            seen = read(conn, self.settings.namespace, plain)
+            self.assertEqual(seen, dict(
+                entry_round_slot="13:05", entry_up_streak=2,
+                entry_market_breadth_ratio="0.150000", report_id="entry", breadth_boards=dict(up=30, down=160, flat=10),
+                breadth_observed_at=stage1.D1 + "T13:05:11+08:00"))
+            # A fallback regime and a report without the facts stay empty rather than guessed.
+            other = dict(plain, exit_plan=dict(plain["exit_plan"], flags=["REGIME_FALLBACK_RANGE"]),
+                         orders=[dict(plain["orders"][0], report_id="r2")])
+            self.assertEqual(read(conn, self.settings.namespace, other), dict(
+                entry_round_slot=None, entry_up_streak=1, entry_market_breadth_ratio=None,
+                report_id="r2", breadth_boards=None, breadth_observed_at=None))
+            missing = dict(plain, orders=[dict(plain["orders"][0], report_id="absent")])
+            self.assertIsNone(read(conn, self.settings.namespace, missing)["entry_up_streak"])
+        # The live ledger stores the same facts on the cycle when its buy fills, and nothing else differs.
+        self.store._entry_observation = lambda db, ns, cycle: read(db.connection, ns, cycle)
+        self.store_events([stage1.report("entry2", stage1.D1, "14:05", [(stage1.B, "新增")], [(stage1.ETF2, stage1.B, 1)]),
+                           stage1.quote("p2", stage1.D1, "14:06", "5.00", code=stage1.ETF2)], rules)
+        cycles = {cycle["etf"]: cycle for cycle in self.store.inspect()["cycles"]}
+        self.assertEqual([cycles[stage1.ETF].get(key) for key in ("entry", "orders", "book", "exit_plan")],
+                         [None, plain["orders"], plain["book"], plain["exit_plan"]])
+        entry = cycles[stage1.ETF2].pop("entry")
+        self.assertEqual((entry["entry_up_streak"], entry["entry_round_slot"], entry["report_id"]), (1, None, "entry2"))
+        self.assertEqual(sorted(cycles[stage1.ETF2]), sorted(plain))
 
     def test_default_rule_keeps_the_stored_v1_snapshot(self):
         import test_stage1 as stage1

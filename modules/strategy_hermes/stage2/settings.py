@@ -19,7 +19,10 @@ class Settings:
     def rules(self):
         """Rules for cycles opened from now on; open cycles keep their own frozen copy."""
         from ..simulator import Rules
-        return Rules() if self.evaluation_rule == "hermes_signal_cycle_v1" else Rules.v2(self.regime_mode)
+        if self.evaluation_rule == "hermes_signal_cycle_v1":
+            return Rules()
+        build = Rules.v2 if self.evaluation_rule == "hermes_signal_cycle_v2" else Rules.v2_1
+        return build(self.regime_mode)
 
     @classmethod
     def read(cls, path):
@@ -65,12 +68,12 @@ class Settings:
         if env == "production" and (len(namespace) > 120
                 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", namespace.removeprefix(prefix))):
             raise ValueError("invalid production namespace")
-        names = {"v1": "hermes_signal_cycle_v1", "v2": "hermes_signal_cycle_v2"}
+        names = {"v1": "hermes_signal_cycle_v1", "v2": "hermes_signal_cycle_v2", "v2.1": "hermes_signal_cycle_v2_1"}
         rule = values.get("MODEL_EVALUATION_RULE") or "v1"
         rule = names.get(rule, rule)
         if rule not in names.values():
-            raise ValueError("MODEL_EVALUATION_RULE must be hermes_signal_cycle_v1 or hermes_signal_cycle_v2")
+            raise ValueError("MODEL_EVALUATION_RULE must be one of " + ", ".join(names.values()))
         mode = values.get("REGIME_MODE") or None
-        if mode not in (None, "DUAL", "SINGLE") or (rule == names["v2"] and mode is None):
-            raise ValueError("REGIME_MODE must be DUAL or SINGLE when the v2 rule is selected")
+        if mode not in (None, "DUAL", "SINGLE") or (rule != names["v1"] and mode is None):
+            raise ValueError("REGIME_MODE must be DUAL or SINGLE when a v2 rule is selected")
         return cls(env, dsn, redis_url, prefix, namespace, rule, mode)

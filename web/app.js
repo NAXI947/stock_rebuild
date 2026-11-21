@@ -449,8 +449,10 @@ function reportDetail(panel,row,refreshReport) {
   const hybrid=row.input_meta?.etf_recommendations;
   const directionFirst=["etf-direction-first-v2","etf-direction-first-v3"].includes(hybrid?.method);
   const explain=(hybrid || row.input_meta?.penetration)?.sectors || {};
-  const missingWeights=Math.max(0,...Object.values(explain).map(s=>s.coverage_gaps?.weights?.products || 0));
-  if (missingWeights) panel.append(elt("p","资料待补：目录"+missingWeights+"只ETF缺可用成分权重，穿透待核验。","muted"));
+  // Reports saved before the strategy-scope count carry only the catalogue-wide one.
+  const weightGaps=Object.values(explain).map(s=>s.coverage_gaps?.weights || {});
+  const missingWeights=Math.max(0,...weightGaps.map(gap=>gap.scope_products || 0));
+  if (missingWeights) panel.append(elt("p","资料待补：策略范围内"+missingWeights+"只ETF缺可用成分权重，穿透待核验。","muted"));
   const rejectionLabels = {
     SECTOR_MEMBERS_UNAVAILABLE:"缺板块成分", WEIGHTS_UNVERIFIED:"权重待核验", PRODUCT_RULE_UNVERIFIED:"交易规则待核验",
     MAINBOARD_LOW_OR_UNKNOWN:"主板权重不足或待核验", EXPOSURE_LOW:"板块暴露不足", CORE_EXPOSURE_LOW:"核心股暴露不足",
@@ -1352,7 +1354,9 @@ function backtestRulesNotice(rule) {
     report.push(["首次转弱","绑定板块首次被判转弱，同一周期只减一次","减"+half,"reduce"],
       ["再次转弱","跨交易日第 "+exits.weak_exit_trade_days+" 次转弱，同一天多次只计一次","全清","exit"]);
     if (exits.bear_early_weak_exit) report.push(["弱势档早衰","弱势档、保本未启用、成交次日起现价低于成本时首次转弱","全清","exit"]);
-    report.push(["转强或维持","转弱计数清零；待核实或本轮未覆盖则不变","继续持有","hold"]);
+    report.push(exits.hold_clears_weak_days===false
+      ? ["转强或维持","转强时转弱计数清零；维持、待核实或本轮未覆盖则不变","继续持有","hold"]
+      : ["转强或维持","转弱计数清零；待核实或本轮未覆盖则不变","继续持有","hold"]);
     const fork=elt("div",undefined,"flow-fork");
     fork.append(flowBranch("每条报价","五轮采样和轮后补价；自上而下判，命中第一条即停",quote),
       flowBranch("每份研判报告","只看本周期绑定的板块",report));

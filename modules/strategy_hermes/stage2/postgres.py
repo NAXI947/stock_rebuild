@@ -152,6 +152,13 @@ class PostgresLedger(Ledger):
                  for body, available in rows for row in document(body)["rows"]]
         return result | atr20(code, daily, [day.isoformat() for day in calendar.days], at)
 
+    def _entry_observation(self, db, ns, cycle):
+        """Slot, UP streak and board breadth of the entry round, read from saved reports; no order reads them."""
+        if self.origin != "LIVE":
+            return None
+        from .entry_observation import read
+        return read(db.connection, ns, cycle)
+
     def _store(self, db, raw_events, days, instruments, rule):
         calendar = Calendar(days)
         units = {code: integer(unit) for code, unit in instruments.items() if CODE.fullmatch(code)}

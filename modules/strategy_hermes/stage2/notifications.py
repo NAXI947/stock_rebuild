@@ -287,19 +287,16 @@ def _etf_gaps(report, ranked, names):
     """Coverage is not a rejected candidate, including in archived reports."""
     meta = report["input_meta"]
     groups = (meta.get("etf_recommendations") or meta.get("penetration") or {}).get("sectors", {})
-    missing_weights, members = 0, []
+    in_scope, members = 0, []
     for sid in ranked:
         details = groups.get(sid, {})
-        legacy = sum(not product.get("matched") and "WEIGHTS_UNVERIFIED" in
-                     product.get("quality", []) + product.get("rejection_reasons", [])
-                     for product in details.get("products", ()))
-        missing_weights = max(missing_weights, legacy,
-            ((details.get("coverage_gaps") or {}).get("weights") or {}).get("products", 0))
+        weights = (details.get("coverage_gaps") or {}).get("weights") or {}
+        in_scope = max(in_scope, weights.get("scope_products") or 0)
         if details.get("reason") == "SECTOR_MEMBERS_UNAVAILABLE":
             members.append(names[sid])
     result = []
-    if missing_weights:
-        result.append(f"目录{missing_weights}只ETF缺成分权重，穿透待核验")
+    if in_scope:
+        result.append(f"策略范围内{in_scope}只ETF缺成分权重，穿透待核验")
     if members:
         result.append(f"{len(members)}个板块成员资料待补：{'、'.join(members[:3])}" + ("等" if len(members) > 3 else ""))
     return result

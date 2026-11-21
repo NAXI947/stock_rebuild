@@ -297,7 +297,7 @@ class Recommendations(unittest.TestCase):
             self.assertEqual(len(result['products']), 118)
             self.assertTrue(all(product['matched'] for product in result['products']))
             self.assertEqual(result['coverage_gaps']['weights'],
-                             dict(reason='WEIGHTS_UNVERIFIED', products=1351, indexes=1))
+                             dict(reason='WEIGHTS_UNVERIFIED', products=1351, scope_products=0, indexes=1))
         self.assertEqual(bank['representatives'], [ETF])
         self.assertEqual(bank['static_representatives'], [ETF])
         self.assertEqual(chip['representatives'], [])

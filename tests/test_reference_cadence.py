@@ -66,7 +66,7 @@ class Connection:
             return FakeCursor([('identity',)])
         if 'SELECT collected_at FROM supplier_batches' in sql:
             return FakeCursor([(NOW-timedelta(hours=1),)])
-        if 'FROM supplier_market_batches' in sql:
+        if 'FROM supplier_market_batches' in sql or 'FROM rotation r JOIN events' in sql:
             return FakeCursor([])
         raise AssertionError(sql)
 
@@ -222,7 +222,7 @@ class ReferenceFlow(TestCase):
         policy = ReferencePolicy(data, NOW, 'market')
         summary = {}
         with patch.object(maintenance, 'cached_members') as cache, patch.object(maintenance, '_page') as page:
-            maintenance._members(SimpleNamespace(_connect=Connection), data, {},
+            maintenance._members(SimpleNamespace(_connect=Connection, ns='test'), data, {},
                 {'600000':['600000.SH']}, 'identity', [], date(2026,11,16), None, NOW,
                 lambda *a:None, lambda:None, summary, policy=policy)
         cache.assert_not_called()

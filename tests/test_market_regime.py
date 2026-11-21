@@ -94,6 +94,9 @@ class Atr(TestCase):
 
     def test_window_may_lag_three_sessions_but_not_more(self):
         calendar = DAYS + ["2026-10-01"]
+        # DAYS[-1] is T-1: a window ending at T-2 or T-3 is used, one ending at T-4 is not.
+        self.assertEqual(stats.atr20("512800.SH", self.rows(DAYS[9:29]), calendar, self.AT),
+                         dict(atr20="0.040000", atr_as_of=DAYS[28]))
         lagging = stats.atr20("512800.SH", self.rows(DAYS[8:28]), calendar, self.AT)
         self.assertEqual(lagging["atr_as_of"], DAYS[27])
         self.assertEqual(stats.atr20("512800.SH", self.rows(DAYS[7:27]), calendar, self.AT),

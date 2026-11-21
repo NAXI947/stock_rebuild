@@ -147,6 +147,9 @@ def maintenance_fields(body, result, state):
     groups = (('catalog', 'ETF目录'), ('members', '板块成员'), ('weights', '指数权重'),
               ('aum', 'ETF规模（日批次）'), ('rules', '产品规则'), ('weight_evidence', '权重依据'))
     lines = verification_lines(result.get('verification'))
+    missing_weights = mapping.get('missing_strategy_weights')
+    if type(missing_weights) is int and missing_weights > 0:
+        lines.append(f'⏳ 策略范围内{missing_weights}只ETF缺可用成分权重')
     if result.get('next_action'):lines.append('⏳ '+_line(result['next_action'],180))
     for item in source_items:
         if item.get('dataset') == 'mapping':

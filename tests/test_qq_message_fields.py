@@ -30,6 +30,21 @@ class MessageFields(unittest.TestCase):
         self.assertTrue(any('454条产品范围或指数关联待人工整理' in line for line in fields['items']))
         self.assertFalse(fields['pending_items'])
 
+    def test_weight_gap_counts_only_strategy_products(self):
+        from modules.strategy_hermes.stage2.penetration import missing_strategy_weights
+        from modules.strategy_hermes.simulator import moment
+        mapping = dict(
+            products={'512480.SH': dict(index_code='future', rule=dict(scope='domestic_passive_sector')),
+                      '512800.SH': dict(index_code='available', rule=dict(scope='domestic_passive_sector')),
+                      '511010.SH': dict(index_code='missing', rule=dict(scope='bond'))},
+            weights={'future': dict(as_of_date='2026-11-16', available_at='2026-11-16T14:18:00+08:00',
+                                    rows=[dict(code='600001.SH', weight='1')]),
+                     'available': dict(as_of_date='2026-11-16', rows=[dict(code='600001.SH', weight='1')])})
+        count = missing_strategy_weights(mapping, moment('2026-11-16T10:00:00+08:00'))
+        fields = maintenance_fields(dict(mode='market'), dict(mapping=dict(missing_strategy_weights=count)), 'SUCCEEDED')
+        self.assertIn('⏳ 策略范围内1只ETF缺可用成分权重', fields['items'])
+        self.assertEqual(missing_strategy_weights(mapping, moment('2026-11-16T14:18:00+08:00')), 0)
+
     def test_failed_worker_is_not_displayed_as_completed_even_with_good_saved_items(self):
         body = dict(mode='close', business_date='2026-11-16', request_id='maint-1')
         result = dict(items=[dict(dataset='stock_basic', status='OK', message='5924条已保存')])

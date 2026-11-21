@@ -394,6 +394,17 @@ def _priorities(ledger, now=None):
     return held, [s for s in dict.fromkeys(sectors + active) if isinstance(s, str)]
 
 
+def _reported_today(ledger, now):
+    """Member boards of today's reports in any phase; a weakening board is still shown, so it joins the pending queue."""
+    with ledger._connect() as conn:
+        rows = conn.execute("""
+            SELECT r.sector_id,r.body FROM rotation r JOIN events e
+              ON e.ns=r.ns AND e.kind='report' AND e.id=r.body->>'report_id'
+            WHERE r.ns=%s AND left(e.at,10)=%s ORDER BY r.sector_id LIMIT 100
+            """, (ledger.ns, now.date().isoformat())).fetchall()
+    return [sid for sid, body in rows if _decode(body).get('member') is True]
+
+
 def _source_missing_since(prior, diagnostic, now):
     """Same empty source window seen again on a later trade date.
 
@@ -473,8 +484,17 @@ def sector_targets(mapping, market, priorities, now, *, scope=None, policy=None)
     pending = cursor.get('pending') or []
     secondary = _after_cursor((set(current) | set(mapping['sectors']) | set(pending)) - set(primary), cursor.get('other_after'))
     if policy:
-        primary = [sid for sid in primary if policy.due('members:'+sid)]
-        secondary = [sid for sid in secondary if policy.due('members:'+sid)]
+        def empty(sid):
+            return not (mapping['sectors'].get(sid) or {}).get('members')
+
+        def due(sid):
+            # The retry slot also takes a board that has no members and was never attempted, so a board first
+            # seen after the market slot does not wait a day. Attempts stay bounded by the policy.
+            key = 'members:'+sid
+            return policy.due(key) or (policy.mode == 'retry' and key not in policy.pending and empty(sid))
+        # A board without members comes before a refresh of one that has them; each group keeps its cursor order.
+        primary = sorted((sid for sid in primary if due(sid)), key=lambda sid: not empty(sid))
+        secondary = sorted((sid for sid in secondary if due(sid)), key=lambda sid: not empty(sid))
     # Holdings/active directions take precedence; reserve two slots so they
     # cannot permanently crowd out newly discovered or existing other boards.
     primary_limit = MAX_SECTORS - 2 if secondary else MAX_SECTORS
@@ -493,6 +513,11 @@ def sector_targets(mapping, market, priorities, now, *, scope=None, policy=None)
 def _members(ledger, mapping, market, identities, identity_batch, priorities, day, captures,
              now, request, checkpoint, summary, *, review=False, policy=None):
     scope = {}
+    if policy:
+        cursor = mapping.setdefault('member_maintenance', {})
+        waiting = [sid for sid in _reported_today(ledger, now) if sid not in mapping['sectors']]
+        if waiting:
+            cursor['pending'] = list(dict.fromkeys([*(cursor.get('pending') or []), *waiting]))
     targets, boards = sector_targets(mapping, market, priorities, now, scope=scope, policy=policy)
     summary['members_scope'] = scope
     if policy:

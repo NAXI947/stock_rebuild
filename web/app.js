@@ -193,6 +193,132 @@ async function navigate(page) {
   else if (page==="hot-sectors") await renderHotSectors();
   else if (await refresh() && state.page===page) page==="overview"?renderOverview():await renderMarket();
 }
+const roundMarks = {NEW:["＋","新增"],STRENGTHEN:["▲","加强"],MAINTAIN:["—","维持"],WEAKEN:["▼","减弱"],
+  RETREAT:["✕","退潮"],UNKNOWN:["?","待确认"]};
+const roundSkips = {DUPLICATE_EVIDENCE:"证据与上一轮相同，状态沿用",NO_ACTIVE_DIRECTION:"不在活动方向内，未判新增不入场",
+  ALREADY_IN_CHAIN:"已在活动方向内，再判新增不重复入场",COINCIDENT_REPORT_SUPERSEDED:"同一时刻另一份报告的判断已生效"};
+// View switches of the five-round card; the page rebuilds it on every refresh.
+const roundsUI = {source:false, idle:false};
+
+// How one sector stands after one round: entered, counted, left, carried over, or outside the active directions.
+function roundCell(cell) {
+  if (!cell) return null;
+  const mark=phase=>roundMarks[phase] || [];
+  const counted=phase=>({kind:phase.toLowerCase(),mark:mark(phase),count:cell.streak>1 ? cell.streak : 0});
+  if (cell.advanced==="NEW") return {kind:"new",mark:mark("NEW"),count:0};
+  if (cell.advanced==="RETREAT" && cell.was_active!==false) return {kind:"retreat",mark:mark("RETREAT"),count:0};
+  if (cell.advanced && cell.advanced!=="RETREAT") return counted(cell.advanced);
+  if (cell.active) return {...(cell.phase ? counted(cell.phase) : {kind:"held",mark:["","沿用"],count:0}),carried:true};
+  return {kind:"idle",mark:cell.covered ? ["",mark(cell.judged)[1] || "待确认"] : ["","·"],count:0};
+}
+function roundCellNote(name, slot, cell, shape) {
+  const lines=[name+" · "+slot];
+  const label=shape.mark[1]+(shape.count ? "×"+shape.count : "");
+  if (shape.kind==="retreat") lines.push("本轮退潮，退出活动方向");
+  else if (shape.kind==="idle") lines.push("不在活动方向内");
+  else lines.push((shape.carried ? "状态沿用：" : "活动方向：")+label);
+  if (!cell.covered) lines.push("本轮报告未覆盖该板块");
+  else {
+    lines.push("AI 本轮判断："+(roundMarks[cell.judged]?.[1] || "待确认"));
+    if (roundSkips[cell.skipped]) lines.push(roundSkips[cell.skipped]);
+    if (cell.reasons?.length) lines.push(cell.reasons.join("；"));
+  }
+  return lines.join("\n");
+}
+function roundChip(name, slot, cell) {
+  const shape=roundCell(cell);
+  if (!shape) return elt("span","·","rm-wait");
+  const chip=elt("span",undefined,"rm-chip rm-"+shape.kind+(shape.carried ? " rm-carried" : ""));
+  if (shape.carried) chip.append(elt("span","=","rm-sign"));
+  if (shape.mark[0]) chip.append(elt("span",shape.mark[0],"rm-sign"));
+  // Narrow cards drop the word of a counted phase and keep its sign and count.
+  chip.append(elt("span",shape.mark[1],["strengthen","maintain","weaken"].includes(shape.kind) ? "rm-word" : undefined));
+  if (shape.count) chip.append(elt("span","×"+shape.count,"rm-count numeric"));
+  const box=elt("div",undefined,"rm-cell");
+  box.title=roundCellNote(name,slot,cell,shape);
+  box.append(chip);
+  const change=cell.covered && cell.change!=null && cell.change!=="" ? Number(cell.change) : NaN;
+  if (Number.isFinite(change) && shape.kind!=="idle")
+    box.append(elt("span",(change>0 ? "+" : "")+(change*100).toFixed(2)+"%","rm-change numeric "+(change>0 ? "up" : change<0 ? "down" : "")));
+  return box;
+}
+// Rows are sectors, columns the five rounds; sectors that were never active today stay folded away.
+function roundMatrix(view, day, openReport, repaint) {
+  const slots=view.slots || [], order=["STRENGTHEN","NEW","MAINTAIN","WEAKEN"];
+  const reports=slots.map(slot=>day ? (view.reports || []).find(r=>r.slot===slot && r.at.slice(0,10)===day) : undefined);
+  const sectors=(view.round_sectors || []).map((sector,index)=>{
+    const cells=slots.map(slot=>sector.rounds?.[slot]), last=cells.filter(Boolean).at(-1);
+    const live=cells.some(cell=>cell && (cell.active || cell.was_active));
+    const rank=!live ? 9 : !last?.active ? 5 : order.includes(last.phase) ? order.indexOf(last.phase) : 4;
+    return {name:sector.name || sector.id,cells,live,rank,index};
+  }).sort((a,b)=>a.rank-b.rank || a.index-b.index);
+  const idle=sectors.filter(sector=>!sector.live).length;
+  const wrap=elt("div",undefined,"round-matrix-wrap");
+  const bar=elt("div",undefined,"round-bar"), legend=elt("ul",undefined,"round-legend");
+  for (const [kind,sign,word] of [["new","＋","新增入场"],["strengthen","▲","加强"],["maintain","—","维持"],["weaken","▼","减弱"],
+    ["retreat","✕","退潮离场"]]) {
+    const item=elt("li"), chip=elt("span",undefined,"rm-chip rm-"+kind);
+    chip.append(elt("span",sign,"rm-sign"),elt("span",word));
+    item.append(chip);
+    legend.append(item);
+  }
+  const carried=elt("li"), carriedChip=elt("span",undefined,"rm-chip rm-held rm-carried");
+  carriedChip.append(elt("span","=","rm-sign"),elt("span","状态沿用"));
+  carried.append(carriedChip);
+  legend.append(carried,elt("li","×N 连续次数","rm-key"));
+  const toggle=(label,key)=>{
+    const node=button(label,()=>{roundsUI[key]=!roundsUI[key];repaint();});
+    node.setAttribute("aria-pressed",String(roundsUI[key]));
+    return node;
+  };
+  const switches=elt("div",undefined,"tabs round-switches");
+  if (idle) switches.append(toggle("非活动板块 "+idle,"idle"));
+  switches.append(toggle("看原文","source"));
+  bar.append(legend,switches);
+  wrap.append(bar);
+  if (roundsUI.source) {
+    slots.forEach((slot,index)=>{
+      const report=reports[index], row=elt("div",undefined,"slot");
+      row.append(elt("strong",slot,"numeric"));
+      if (report) row.append(elt("p",report.summary || statusName(report.status)),button("查看报告",()=>openReport(report.id)));
+      else row.append(elt("span","待报告","muted"));
+      wrap.append(row);
+    });
+    return wrap;
+  }
+  const scroll=elt("div",undefined,"table-scroll"), grid=elt("table",undefined,"round-matrix"), head=grid.createTHead().insertRow();
+  const corner=elt("th","板块");
+  corner.scope="col";
+  head.append(corner);
+  slots.forEach((slot,index)=>{
+    const th=elt("th"), report=reports[index];
+    th.scope="col";
+    th.append(elt("strong",slot,"numeric"));
+    if (report) {
+      const open=button("",()=>openReport(report.id),"rm-open");
+      open.append(elt("span","查看","rm-word"),document.createTextNode("报告"));
+      open.setAttribute("aria-label","查看 "+slot+" 报告");
+      th.append(open);
+    } else {
+      const round=day && (view.rotation_window || []).find(r=>r.trade_date===day && r.slot===slot);
+      th.append(elt("span",["FAILED","MISSING"].includes(round?.status) ? roundStates[round.status] : "待报告","muted"));
+    }
+    head.append(th);
+  });
+  const body=grid.createTBody();
+  for (const sector of sectors) {
+    if (!sector.live && !roundsUI.idle) continue;
+    const row=body.insertRow(), name=elt("th",sector.name);
+    name.scope="row";
+    if (!sector.live) row.className="rm-idle-row";
+    row.append(name);
+    sector.cells.forEach((cell,index)=>row.insertCell().append(roundChip(sector.name,slots[index],cell)));
+  }
+  scroll.append(grid);
+  wrap.append(scroll);
+  if (!body.rows.length) wrap.append(empty(sectors.length ? "今日暂无活动方向" : "暂无已落库的板块判断"));
+  return wrap;
+}
 function renderOverview() {
   const view=state.view, market=view.market, screen=$("screen");
   const header=title("轮动与机会","查看五轮研判、板块状态与已有模拟持仓",button("刷新",async()=>{if(await refresh())renderOverview();}));
@@ -202,7 +328,7 @@ function renderOverview() {
     ["自动持仓与待执行",view.evaluation.open_or_pending],["ETF 报价",market?.quality.etf_quote_count],
   ]);
   const panes=elt("div",undefined,"split");
-  const rounds=card("五轮报告"), selected=card("报告详情");
+  const rounds=elt("section",undefined,"card round-card"), selected=card("报告详情");
   selected.append(empty("选择一份已落库的报告"));
   let detailRequest = 0;
   async function openReport(id) {
@@ -210,15 +336,8 @@ function renderOverview() {
     const detail = await api(apiRoot+"/report?id="+encodeURIComponent(id));
     if (request === detailRequest && selected.isConnected) reportDetail(selected,detail,()=>openReport(id));
   }
-  for (const slot of view.slots) {
-    const report=view.reports.find(r=>r.slot===slot && r.at.slice(0,10)===dayReports);
-    const row=elt("div",undefined,"slot");
-    row.append(elt("strong",slot,"numeric"));
-    if (report) {
-      row.append(elt("p",report.summary || statusName(report.status)),button("查看报告",()=>openReport(report.id)));
-    } else row.append(elt("span","待报告","muted"));
-    rounds.append(row);
-  }
+  const paintRounds=()=>rounds.replaceChildren(elt("h2","五轮报告"),roundMatrix(view,dayReports,openReport,paintRounds));
+  paintRounds();
   panes.append(rounds,selected);
   const chain=card("活动轮动方向");
   chain.append(table(["板块标识","状态","报告"],Object.entries(view.rotation).map(([id,row])=>[id,tag(row.label||statusName(row.phase)),row.report_id]),"当前暂无已确认的活动方向"));

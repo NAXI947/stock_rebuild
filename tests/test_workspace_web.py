@@ -126,6 +126,7 @@ class WorkspaceWebTest(unittest.TestCase):
         self.assertEqual(status,200)
         self.assertIsNone(json.loads(raw)["market"])
         self.assertEqual(json.loads(raw)["reports"],[])
+        self.assertEqual(json.loads(raw)["round_sectors"],[])
 
     def test_secondary_views_are_authenticated_and_have_no_synthetic_data(self):
         self.assertEqual(self.request("GET", API + "/status", auth=False)[0], 401)
@@ -422,3 +423,73 @@ class WorkspaceWebTest(unittest.TestCase):
         self.assertEqual(result["instruments"],{code:100})
         self.assertEqual(result["quotes"][0]["observed_at"],"2026-11-10T10:02:00+08:00")
         self.assertEqual(result["quotes"][0]["price_kind"],"ASSUMED")
+
+
+class RoundSectorsTest(unittest.TestCase):
+    """The five-round matrix reads the committed rotation chain; it does not recount it."""
+
+    def setUp(self):
+        self.chain, self.loaded = {}, []
+
+    def publish(self, day, slot, judgments):
+        from modules.strategy_hermes.rotation_chain import advance
+        clock = f"{day}T{slot}:40+08:00"
+        report = dict(id=f"report-{day}-{slot}", evidence_key=None, sectors={})
+        named = []
+        for index, (sid, (phase, evidence)) in enumerate(judgments.items()):
+            row = dict(phase=phase, state="UNKNOWN", row=index, sources=[f"{sid}@{evidence}"], data_as_of=evidence,
+                       reasons=[f"板块涨跌 {index}.00%"])
+            updated, effective = advance(self.chain.get(sid), report, sid, row)
+            if updated is not None:
+                self.chain[sid] = updated
+            report["sectors"][sid] = dict(effective, declared_phase=phase)
+            named.append(dict(sector_name=f"板块{sid[-1]}"))
+        facts = {sid: dict(board_return_ratio=f"0.0{index}") for index, sid in enumerate(judgments)}
+        self.loaded.insert(0, (dict(id=report["id"], at=clock, slot=slot), report, dict(sectors=named, source_facts=facts)))
+
+    def matrix(self):
+        from modules.strategy_hermes.rotation_chain import describe
+        from modules.strategy_hermes.workspace_web import _round_sectors
+        rotation = {sid: dict(state, **describe(state["phase"], state["streak"]))
+                    for sid, state in self.chain.items() if state["member"]}
+        return {row["name"]: row["rounds"] for row in _round_sectors(self.loaded[:8], rotation)}
+
+    def test_rounds_follow_entry_counts_retreat_and_carried_state(self):
+        a, b, c, d, e = (f"kaipanla:80100{n}" for n in range(1, 6))
+        self.publish("2026-11-18", "14:30", {a: ("NEW", "e0"), c: ("NEW", "e0"), e: ("NEW", "e0")})
+        for slot in ("09:35", "10:35", "13:05", "14:05", "14:30"):
+            self.publish("2026-11-19", slot, {a: ("WEAKEN", slot), c: ("MAINTAIN", slot)})
+        self.publish("2026-11-20", "09:35", {a: ("WEAKEN", "f1"), c: ("MAINTAIN", "f1"), d: ("MAINTAIN", "f1"), e: ("UNKNOWN", "f1")})
+        self.publish("2026-11-20", "10:35", {a: ("WEAKEN", "f1"), b: ("NEW", "f2"), c: ("RETREAT", "f2")})
+        self.publish("2026-11-20", "13:05", {a: ("UNKNOWN", "f3"), b: ("STRENGTHEN", "f3"), c: ("WEAKEN", "f3")})
+        self.publish("2026-11-20", "14:05", {a: ("MAINTAIN", "f4"), b: ("STRENGTHEN", "f4")})
+        rounds = self.matrix()
+        self.assertEqual(list(rounds), ["板块1", "板块2", "板块3", "板块4", "板块5"])
+        self.assertNotIn("14:30", rounds["板块1"])
+
+        def cells(name, *keys):
+            return [tuple(rounds[name][slot].get(key) for key in keys) for slot in ("09:35", "10:35", "13:05", "14:05")]
+
+        self.assertEqual(cells("板块1", "advanced", "phase", "streak", "skipped"), [
+            ("WEAKEN", "WEAKEN", 6, None), (None, "WEAKEN", 6, "DUPLICATE_EVIDENCE"),
+            (None, "WEAKEN", 6, None), ("MAINTAIN", "MAINTAIN", 1, None)])
+        self.assertEqual(cells("板块2", "covered", "advanced", "active", "streak"), [
+            (False, None, False, 0), (True, "NEW", True, 0), (True, "STRENGTHEN", True, 1), (True, "STRENGTHEN", True, 2)])
+        self.assertEqual(cells("板块3", "advanced", "was_active", "active", "skipped"), [
+            ("MAINTAIN", True, True, None), ("RETREAT", True, False, None),
+            (None, False, False, "NO_ACTIVE_DIRECTION"), (None, False, False, None)])
+        self.assertEqual({(cell["active"], cell["was_active"]) for cell in rounds["板块4"].values()}, {(False, False)})
+        # 板块5 last advanced before the eight-report window, so its state comes from the rotation table.
+        self.assertEqual(cells("板块5", "judged", "active", "phase", "covered"), [
+            ("UNKNOWN", True, "NEW", True), (None, True, "NEW", False), (None, True, "NEW", False), (None, True, "NEW", False)])
+        self.assertEqual(rounds["板块1"]["09:35"]["change"], "0.00")
+        self.assertEqual(rounds["板块1"]["09:35"]["reasons"], ["板块涨跌 0.00%"])
+
+    def test_no_reports_and_missing_optional_fields_yield_an_empty_or_partial_matrix(self):
+        from modules.strategy_hermes.workspace_web import _round_sectors
+        self.assertEqual(_round_sectors([], {}), [])
+        sector = dict(phase="UNKNOWN", state="UNKNOWN")
+        row, = _round_sectors([(dict(id="r", at="2026-11-20T09:35:40+08:00", slot="09:35"), dict(sectors={"kaipanla:801001": sector}), {})], {})
+        self.assertIsNone(row["name"])
+        self.assertEqual(row["rounds"]["09:35"], dict(active=False, phase=None, streak=0, covered=True, was_active=False,
+                                                     judged="UNKNOWN", advanced=None, skipped=None, reasons=[], change=None))

@@ -20,6 +20,7 @@ from .manual_api import (
 from .manual_cases import copy_auto
 from .manual_queue import ManualQueue
 from .market_stream import make_workspace_server, market_application, read_market
+from .rotation_chain import COUNTED_PHASES, archive_phase
 from .simulator import CHINA, CODE, moment
 from .temp_maintenance import TempMaintenance
 from .workspace_readiness import eod_body, eod_reference, qq_brief, recent_evaluation, runtime_status
@@ -69,6 +70,76 @@ def _background(market):
                 leaders=[item[1] for item in leaders[:8]])
 
 
+def _round_sectors(loaded, rotation):
+    """Follow each sector of the latest report day through that day's rounds.
+
+    `loaded` is the overview's report window, newest first. Phases and streaks are the
+    ones the ledger committed with each report; a round that did not advance a direction
+    keeps the state it had, and `active` is None where the window cannot tell.
+    """
+    if not loaded:
+        return []
+    outside = dict(active=False, phase=None, streak=0)
+
+    def member(row):
+        return dict(active=True, phase=archive_phase(row) or row["phase"], streak=row.get("streak", 0))
+
+    def carried(row):
+        return bool(row.get("duplicate_evidence")) and row.get("state") == "HOLD"
+
+    day, states, sectors = loaded[0][0]["at"][:10], {}, {}
+    for entry, row, source in loaded:
+        if entry["at"][:10] != day:
+            continue
+        named = source.get("sectors")
+        for sid, sector in row.get("sectors", {}).items():
+            index = sector.get("row")
+            raw = named[index] if isinstance(named, list) and type(index) is int and 0 <= index < len(named) else None
+            sectors.setdefault(sid, dict(id=sid, name=raw.get("sector_name") if isinstance(raw, dict) else None, rounds={}))
+    for _, row, _ in reversed(loaded):
+        for sid, sector in row.get("sectors", {}).items():
+            if sid in states:
+                continue
+            phase = archive_phase(sector)
+            if carried(sector):
+                states[sid] = member(sector)
+            elif phase == "NEW":
+                states[sid] = outside
+            elif phase in COUNTED_PHASES and sector.get("streak", 0) > 1:
+                states[sid] = dict(member(sector), streak=sector["streak"] - 1)
+            elif phase in COUNTED_PHASES:
+                states[sid] = dict(active=True, phase=None, streak=0)
+            elif phase:
+                states[sid] = None
+    for sid in sectors:
+        if sid not in states:
+            held = rotation.get(sid)
+            states[sid] = dict(active=True, phase=held["phase"], streak=held["streak"]) if held else outside
+    for entry, row, source in reversed(loaded):
+        before = dict(states)
+        for sid, sector in row.get("sectors", {}).items():
+            phase = archive_phase(sector)
+            if phase == "RETREAT":
+                states[sid] = outside
+            elif phase or carried(sector):
+                states[sid] = member(sector)
+        if entry["at"][:10] != day or not entry["slot"]:
+            continue
+        facts = source.get("source_facts")
+        for sid, shown in sectors.items():
+            sector, fact = row.get("sectors", {}).get(sid), facts.get(sid) if isinstance(facts, dict) else None
+            was, now = before.get(sid), states.get(sid)
+            cell = dict(now or dict(active=None, phase=None, streak=0), covered=sector is not None,
+                        was_active=was["active"] if was else None)
+            if sector is not None:
+                cell.update(judged=sector.get("declared_phase", sector["phase"]), advanced=archive_phase(sector),
+                            skipped="DUPLICATE_EVIDENCE" if sector.get("duplicate_evidence") else sector.get("reason"),
+                            reasons=sector.get("reasons", []),
+                            change=fact.get("board_return_ratio") if isinstance(fact, dict) else None)
+            shown["rounds"][entry["slot"]] = cell
+    return list(sectors.values())
+
+
 def _overview(ledger, fallback, calendar):
     from .workspace_archive import snapshot
     try:
@@ -82,7 +153,7 @@ def _overview(ledger, fallback, calendar):
             """SELECT id,at,payload FROM events WHERE ns=%s AND kind='report'
                ORDER BY at DESC,id DESC LIMIT 8""", (ledger.ns,),
         ).fetchall()
-    reports,window = [],[]
+    reports,window,loaded = [],[],[]
     for rid,at,raw in rows:
         row = json.loads(raw)
         source = json.loads(row["raw"])
@@ -90,8 +161,10 @@ def _overview(ledger, fallback, calendar):
             window = row.get("input_meta",{}).get("rotation_window",[])
         reports.append(dict(id=rid,at=at,status=row["status"],summary=source.get("summary"),
                             data_as_of=row.get("data_as_of"),slot=row.get("round_slot")))
+        loaded.append((reports[-1],row,source))
     return dict(environment=ledger.settings.env,input_kind=ledger.origin,slots=SLOTS,
-                reports=reports,rotation_window=window,rotation=view.get("rotation",{}),cycles=view.get("cycles",[]),
+                reports=reports,round_sectors=_round_sectors(loaded,view.get("rotation",{})),
+                rotation_window=window,rotation=view.get("rotation",{}),cycles=view.get("cycles",[]),
                 evaluation=view.get("evaluation",{}), evaluation_recent=view.get("evaluation_recent"),
                 new_cycle_rule=ledger._rules().snapshot(),
                 market=_background(read_market(ledger,fallback)))

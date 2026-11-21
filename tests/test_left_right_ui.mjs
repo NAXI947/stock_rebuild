@@ -57,7 +57,10 @@ test("backtest rules draw the screening and exit topology from the served rule s
     bear_early_weak_exit:false,weak_exit_trade_days:4,breakeven_arm_return:"0.017",breakeven_buffer:"1.007",
     regime_bull_volume_ratio:"1.13",regime_bear_volume_ratio:"0.87",
     exit_table:{BEAR_DEFENSE:row("0.7",2),RANGE_ROTATION:row("0.8",3),BULL_OFFENSE:row("0.95",4)}};
-  const text=context.backtestRulesNotice(v2).textContent;
+  const notice=context.backtestRulesNotice(v2),text=notice.textContent,sections=walk(notice,node=>node.tagName==="details");
+  assert.deepEqual(sections.map(node=>node.open),[false,false,false]);
+  sections[1].open=true;sections[1].dispatch("toggle");
+  assert.deepEqual(walk(context.backtestRulesNotice(v2),node=>node.tagName==="details").map(node=>node.open),[false,true,false]);
   for (const part of ["新周期规则 hermes_signal_cycle_v2","筛选逻辑","交易逻辑","成员不少于 300 只","沪深300 + 中证1000",
     "0.7 × ATR20，限 1.1%–2.2%","0.95 × ATR20，限 1.1%–2.2%","0.71 × ATR20，限 2.6%–3.6%","T+2 起浮盈低于 +1.2%","T+11",
     "峰值浮盈到过 +1.7%","成本 × 1.007","跨交易日第 4 次转弱","量能比 ≥ 1.13","量能比 ≤ 0.87","减50%，并启用保本",

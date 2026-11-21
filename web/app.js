@@ -1159,6 +1159,17 @@ function exitLineTable(rule) {
   const wrap=elt("div",undefined,"flow-table-wrap");wrap.append(table);
   return wrap;
 }
+// Rule sections the reader has opened; the workbench rebuilds the notice on every refresh.
+const openRuleSections=new Set();
+function ruleSection(key, number, name, gist) {
+  const section=elt("details",undefined,"flow-section"),summary=elt("summary"),heading=elt("h3");
+  heading.append(elt("span",number,"backtest-rule-number"),document.createTextNode(name));
+  summary.append(heading,elt("span",gist,"flow-gist"));
+  section.open=openRuleSections.has(key);
+  section.addEventListener("toggle",()=>{ if (section.open) openRuleSections.add(key); else openRuleSections.delete(key); });
+  section.append(summary);
+  return section;
+}
 function backtestRulesNotice(rule) {
   const exits=rule?.exit_table ? rule : null,half=rulePercent(rule?.reduce_ratio ?? "0.50").replace(".0%","%");
   const notice=elt("aside",undefined,"backtest-rules");
@@ -1166,11 +1177,10 @@ function backtestRulesNotice(rule) {
   const heading=elt("div",undefined,"backtest-rules-heading"),name=elt("h2","板块穿透 ETF · 自动模拟规则");
   name.id="backtest-rules-title";
   heading.append(name,elt("span",rule?.version ? "新周期规则 "+rule.version : "规则说明","tag"));
-  notice.append(heading,elt("p","适用于自动周期；手动组合按您设置的节点执行。每个周期开仓时冻结当时的规则，下方为之后新开周期使用的规则。","backtest-rules-intro"));
+  notice.append(heading,elt("p","适用于自动周期；手动组合按您设置的节点执行。每个周期开仓时冻结当时的规则，下方为之后新开周期使用的规则，点标题展开。","backtest-rules-intro"));
 
-  const screen=elt("section",undefined,"flow-section"),screenTitle=elt("h3");
-  screenTitle.append(elt("span","01","backtest-rule-number"),document.createTextNode("筛选逻辑 · 什么情况下买入"));
-  screen.append(screenTitle,flowChain([
+  const screen=ruleSection("screen","01","筛选逻辑 · 什么情况下买入","五轮研判 → 板块方向 → AI 选 ETF → 代表性 → 资料核验 → 活动周期 → 登记买入");
+  screen.append(flowChain([
     ["五轮研判","09:35、10:35、13:05、14:05、14:30，AI 逐板块判断方向"],
     ["板块方向","本轮为新增或加强","维持只观察或继续持仓，不加仓；转弱、退潮不买"],
     ["AI 选 ETF","从已冻结的板块—指数关联里明确选出，每板块至多 3 只","未选中或引用有误，不入场"],
@@ -1180,9 +1190,9 @@ function backtestRulesNotice(rule) {
     ["登记买入","由节点之后第一条有效报价成交，资金须够一手及费用","成交前板块转弱或退潮，撤销买入"],
   ],"筛选逻辑"));
 
-  const trade=elt("section",undefined,"flow-section"),tradeTitle=elt("h3");
-  tradeTitle.append(elt("span","02","backtest-rule-number"),document.createTextNode("交易逻辑 · 买入后怎么卖"));
-  trade.append(tradeTitle);
+  const trade=ruleSection("trade","02","交易逻辑 · 买入后怎么卖",exits
+    ? "买入成交 → 冻结退出计划 → 报价与报告触发 → 登记卖单 → 减仓或全清"
+    : "买入成交 → 报告触发 → 登记卖单 → 减仓或全清");
   const report=[["明确退潮","绑定板块被判为退潮","全清","exit"]];
   if (exits) {
     trade.append(flowChain([
@@ -1222,7 +1232,7 @@ function backtestRulesNotice(rule) {
   ],"成交"));
   if (exits) trade.append(exitLineTable(exits));
 
-  const foot=elt("div",undefined,"backtest-rules-foot");
+  const notes=ruleSection("notes","03","口径说明","研判参考、取价口径、历史周期"),foot=elt("div",undefined,"backtest-rules-foot");
   for (const [label,text] of [
     ["研判参考","主板占比、板块暴露、核心股、当日报价、规模和日均成交额供 AI 综合研判；规模与流动性保留资料日期、覆盖和缺失状态，不设统一数值准入线。"],
     ["取价口径","浮盈和峰值只用轮次采样到的报价，不用日线最高价；ATR20 取买入前 20 个交易日，缺失时各线取下限并标注。"],
@@ -1231,7 +1241,8 @@ function backtestRulesNotice(rule) {
   ]) {
     const line=elt("p");line.append(elt("strong",label),document.createTextNode(text));foot.append(line);
   }
-  notice.append(screen,trade,foot);
+  notes.append(foot);
+  notice.append(screen,trade,notes);
   return notice;
 }
 

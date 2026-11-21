@@ -121,6 +121,27 @@ class MemberRotation(TestCase):
         second, _ = maintenance.sector_targets(resumed, None, priorities, NOW + timedelta(hours=3))
         self.assertEqual(set(first + second), set(data['sectors']) | set(priorities))
 
+    def test_boards_without_members_come_first_in_both_slots(self):
+        from modules.strategy_hermes.stage2.reference_policy import ReferencePolicy
+        full = {f'kaipanla:{801000+i}': dict(members=['600000.SH']) for i in range(12)}
+        active = [f'kaipanla:{801000+i}' for i in range(8)] + ['kaipanla:801159', 'kaipanla:801216']
+        weakening = ['kaipanla:801964']
+        for mode, expected in (('market', 8), ('retry', 3)):
+            data = mapping() | dict(sectors=deepcopy(full), member_maintenance=dict(pending=weakening))
+            targets, _ = maintenance.sector_targets(data, None, active, NOW, policy=ReferencePolicy(data, NOW, mode))
+            # Active boards without members lead, then the pending one that today's reports still show.
+            self.assertEqual((len(targets), targets[:2], weakening[0] in targets), (expected, active[8:], True), mode)
+        # A board the retry slot has already tried today, or four times in all, is left alone.
+        data = mapping() | dict(sectors=deepcopy(full), member_maintenance=dict(pending=weakening))
+        policy = ReferencePolicy(data, NOW, 'retry')
+        policy.begin('members:kaipanla:801159', '2026-11-13')
+        policy.pending['members:kaipanla:801216'] = dict(target='2026-11-13', attempts=4, last_slot='2026-11-13:market')
+        targets, _ = maintenance.sector_targets(data, None, active, NOW, policy=policy)
+        self.assertEqual(targets, weakening)
+        # Without a cadence policy the order is the plain cursor order.
+        data = mapping() | dict(sectors=deepcopy(full))
+        self.assertEqual(maintenance.sector_targets(data, None, active, NOW)[0][:6], active[:6])
+
     def test_removed_cursor_target_does_not_reset_rotation_and_scope_list_is_bounded(self):
         data = mapping()
         data['sectors'] = {f'kaipanla:{801000+i}': {} for i in range(40)}

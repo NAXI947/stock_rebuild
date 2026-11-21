@@ -11,6 +11,9 @@ from .inputs import document
 MIN_ADV20 = Decimal("30000000")
 MIN_AUM = Decimal("200000000")
 METHOD = "etf-r3-main-2-v14-observability"
+# In coverage gaps ``products`` counts the whole catalog (bond, money, broad and cross-border funds included) and is
+# for the workbench; ``scope_products`` counts only products admitted to the strategy scope and is what a push reports.
+STRATEGY_SCOPE = "domestic_passive_sector"
 
 
 def number(value):
@@ -219,7 +222,7 @@ def explain_sector(mapping, sector_id, quotes, at, core=(), *, iopv=None, stock_
     members,core=set(sector["members"]),set(core)
     units=instrument_units(mapping,at,legacy=True)
     products,by_index=[],{}
-    missing_weights, missing_indexes = 0, set()
+    missing_weights, in_scope, missing_indexes = 0, 0, set()
     with localcontext(PRECISION):
         bases={index:weights(basis,at.date()) for index,basis in mapping["weights"].items()}
         for code,product in mapping["products"].items():
@@ -229,6 +232,7 @@ def explain_sector(mapping, sector_id, quotes, at, core=(), *, iopv=None, stock_
             basis=bases.get(index)
             if not basis:
                 missing_weights += 1
+                in_scope += (product.get("rule") or {}).get("scope") == STRATEGY_SCOPE
                 if isinstance(index, str):
                     missing_indexes.add(index)
                 continue
@@ -283,7 +287,7 @@ def explain_sector(mapping, sector_id, quotes, at, core=(), *, iopv=None, stock_
                                              mapping["products"][row[0]]["index_code"]))
     return dict(products=products,representatives=[row[0] for row in representatives[:3]],
                 coverage_gaps=dict(weights=dict(reason="WEIGHTS_UNVERIFIED", products=missing_weights,
-                                                indexes=len(missing_indexes))))
+                                                scope_products=in_scope, indexes=len(missing_indexes))))
 
 
 def evaluate(report_event, mapping, market, *, use_report_core=True):
@@ -391,7 +395,7 @@ def _recommend_sector(mapping, sid, market, at, core, core_status, events, *, qu
     stock_quotes = research.get("quotes", {})
     iopvs = market.body.get("iopv", {}).get("readings", {}) if market else {}
     products, eligible = [], {}
-    missing_weights, missing_indexes = 0, set()
+    missing_weights, in_scope, missing_indexes = 0, 0, set()
     quote_cache = {} if quote_cache is None else quote_cache
     weight_cache = {} if weight_cache is None else weight_cache
     for etf, product in sorted(mapping["products"].items()):
@@ -406,6 +410,7 @@ def _recommend_sector(mapping, sid, market, at, core, core_status, events, *, qu
             # A catalog entry without weights has no demonstrated relationship
             # to this sector. Keep the coverage gap without inventing a candidate.
             missing_weights += 1
+            in_scope += (product.get("rule") or {}).get("scope") == STRATEGY_SCOPE
             if isinstance(index, str):
                 missing_indexes.add(index)
             continue
@@ -518,7 +523,7 @@ def _recommend_sector(mapping, sid, market, at, core, core_status, events, *, qu
                 products=products,representatives=[item[0]["etf"] for item in representatives[:3]],
                 static_representatives=[item[0]["etf"] for item in static_representatives[:3]],
                 coverage_gaps=dict(weights=dict(reason="WEIGHTS_UNVERIFIED", products=missing_weights,
-                                                indexes=len(missing_indexes))),
+                                                scope_products=in_scope, indexes=len(missing_indexes))),
                 evaluation_complete=True,evaluated_products=len(products),evaluation_scope="MAPPED_PRODUCTS")
 
 

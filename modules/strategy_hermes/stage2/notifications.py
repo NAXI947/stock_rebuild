@@ -287,18 +287,23 @@ def _etf_gaps(report, ranked, names):
     """Coverage is not a rejected candidate, including in archived reports."""
     meta = report["input_meta"]
     groups = (meta.get("etf_recommendations") or meta.get("penetration") or {}).get("sectors", {})
-    missing_weights, members = 0, []
+    missing_weights, in_scope, members = 0, None, []
     for sid in ranked:
         details = groups.get(sid, {})
         legacy = sum(not product.get("matched") and "WEIGHTS_UNVERIFIED" in
                      product.get("quality", []) + product.get("rejection_reasons", [])
                      for product in details.get("products", ()))
-        missing_weights = max(missing_weights, legacy,
-            ((details.get("coverage_gaps") or {}).get("weights") or {}).get("products", 0))
+        weights = (details.get("coverage_gaps") or {}).get("weights") or {}
+        missing_weights = max(missing_weights, legacy, weights.get("products", 0))
+        if "scope_products" in weights:
+            in_scope = max(in_scope or 0, weights["scope_products"])
         if details.get("reason") == "SECTOR_MEMBERS_UNAVAILABLE":
             members.append(names[sid])
     result = []
-    if missing_weights:
+    # The catalog-wide count stays on the workbench; a report that carries the strategy-scope count pushes only that.
+    if in_scope:
+        result.append(f"策略范围内{in_scope}只ETF缺成分权重，穿透待核验")
+    elif in_scope is None and missing_weights:
         result.append(f"目录{missing_weights}只ETF缺成分权重，穿透待核验")
     if members:
         result.append(f"{len(members)}个板块成员资料待补：{'、'.join(members[:3])}" + ("等" if len(members) > 3 else ""))

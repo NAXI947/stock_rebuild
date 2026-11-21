@@ -185,6 +185,12 @@ class QQReport(TestCase):
         self.assertEqual(gaps, [])
         self.assertEqual(_etf_gaps(entry, [SID], {SID:'银行'}), ['目录1351只ETF缺成分权重，穿透待核验'])
         self.assertEqual(json.dumps(entry, sort_keys=True), original)
+        # A report that carries the strategy-scope count pushes only that; the catalog count stays on the workbench.
+        group = entry['input_meta']['etf_recommendations']['sectors'][SID]
+        group['coverage_gaps'] = dict(weights=dict(reason='WEIGHTS_UNVERIFIED', products=1351, scope_products=0, indexes=373))
+        self.assertEqual(_etf_gaps(entry, [SID], {SID:'银行'}), [])
+        group['coverage_gaps']['weights']['scope_products'] = 4
+        self.assertEqual(_etf_gaps(entry, [SID], {SID:'银行'}), ['策略范围内4只ETF缺成分权重，穿透待核验'])
 
     def test_observations_prioritize_static_representative_then_known_exposure(self):
         from modules.strategy_hermes.stage2.notifications import _recommendation_sections

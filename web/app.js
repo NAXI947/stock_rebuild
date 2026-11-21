@@ -214,7 +214,7 @@ function roundCell(cell) {
 function roundCellNote(name, slot, cell, shape) {
   const lines=[name+" · "+slot];
   const label=shape.mark[1]+(shape.count ? "×"+shape.count : "");
-  if (shape.kind==="retreat") lines.push("本轮退潮，退出活动方向");
+  if (shape.kind==="retreat") lines.push(cell.was_active ? "本轮退潮，退出活动方向" : "本轮退潮；此前是否在活动方向内，超出已加载的报告范围");
   else if (shape.kind==="idle") lines.push("不在活动方向内");
   else lines.push((shape.carried ? "状态沿用：" : "活动方向：")+label);
   if (!cell.covered) lines.push("本轮报告未覆盖该板块");
@@ -248,7 +248,7 @@ function roundMatrix(view, day, openReport, repaint) {
   const reports=slots.map(slot=>day ? (view.reports || []).find(r=>r.slot===slot && r.at.slice(0,10)===day) : undefined);
   const sectors=(view.round_sectors || []).map((sector,index)=>{
     const cells=slots.map(slot=>sector.rounds?.[slot]), last=cells.filter(Boolean).at(-1);
-    const live=cells.some(cell=>cell && (cell.active || cell.was_active));
+    const live=cells.some(cell=>cell && roundCell(cell).kind!=="idle");
     const rank=!live ? 9 : !last?.active ? 5 : order.includes(last.phase) ? order.indexOf(last.phase) : 4;
     return {name:sector.name || sector.id,cells,live,rank,index};
   }).sort((a,b)=>a.rank-b.rank || a.index-b.index);

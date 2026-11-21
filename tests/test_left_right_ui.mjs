@@ -307,4 +307,11 @@ test("five-round card tolerates a day without reports, missing fields and a fail
   assert.notEqual(sparse.heads()[5].textContent,"14:30待报告");
   assert.deepEqual(sparse.grid()["kaipanla:9"].map(cell=>cell.textContent),["=沿用","·","·","·","·"]);
   assert.equal(button(sparse.card(),"非活动板块 1").textContent,"非活动板块 1");
+  // A retreat whose earlier membership lies before the loaded reports is still an exit worth showing.
+  const edge=openOverview(overview({round_sectors:[{id:"kaipanla:7",name:"窗口外退潮",rounds:{
+    "09:35":roundCellOf({active:false,phase:null,streak:0,was_active:null,judged:"RETREAT",advanced:"RETREAT"}),
+    "10:35":outsideCell({judged:"RETREAT",advanced:"RETREAT"})}}]}));
+  assert.deepEqual(edge.grid()["窗口外退潮"].slice(0,2).map(cell=>cell.textContent),["✕退潮-1.23%","退潮"]);
+  assert.match(edge.grid()["窗口外退潮"][0].title,/超出已加载的报告范围/);
+  assert.equal(button(edge.card(),"非活动板块 1"),undefined);
 });

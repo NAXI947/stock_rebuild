@@ -332,11 +332,13 @@ def _versions(ledger, at, issues):
             body = _object(raw)
             if not all(isinstance(body.get(key), dict) for key in ("sectors", "products", "weights")):
                 raise ValueError("invalid maintained mapping")
-            if len(_REACH) >= 4 * MAPPING_VERSIONS:
-                _REACH.clear()
             _REACH[ledger.ns, version] = _reach(body, at)
         except (ValueError, TypeError, KeyError):
             issues.add("MAPPING_VERSION_INVALID")
+    if len(_REACH) > 4 * MAPPING_VERSIONS:
+        listed = {(ledger.ns, version) for version, _, _ in rows}
+        for key in [key for key in _REACH if key not in listed]:
+            del _REACH[key]
     result = []
     for version, available_at, raw in rows:
         if (ledger.ns, version) not in _REACH:

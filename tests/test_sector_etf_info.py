@@ -325,6 +325,17 @@ class SectorEtfPenetrationTest(TestCase):
         self.assertEqual([current[key] for key in ("evaluated", "matched", "entry", "observe", "rejected")], [4, 3, 2, 0, 1])
         self.assertEqual(current["reasons"], [dict(reason="PRODUCT_RULE_UNVERIFIED", etfs=1)])
 
+    def test_a_full_cache_drops_other_versions_and_keeps_the_listed_history(self):
+        info.read_penetration(self.store, self.NOW)
+        info._REACH.update({("other", str(n)): {} for n in range(4 * info.MAPPING_VERSIONS)})
+        body = copy.deepcopy(self.store.versions[1][3])
+        body["products"]["512800.SH"]["index_code"] = None
+        self.store.versions.append(("maintained-next", "2026-11-21T09:00:00+08:00", {}, body))
+        view = info.read_penetration(self.store, self.NOW)
+        self.assertEqual([row["version"] for row in view["recent"]], ["maintained-new"])
+        self.assertEqual((view["mapping"]["version"], view["mapping"]["reachable"]), ("maintained-next", 1))
+        self.assertEqual(sorted(version for _, version in info._REACH), ["maintained-new", "maintained-next", "maintained-old"])
+
     def test_no_mapping_no_report_and_invalid_versions_stay_empty(self):
         self.store.versions[1] = ("maintained-new", "2026-11-20T14:18:00+08:00", {}, {"sectors": []})
         self.store.latest = None

@@ -150,6 +150,10 @@ class WorkspaceWebTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(raw)["items"], [])
         self.assertEqual(self.request("GET", API + "/sector-etf-info?page_size=101")[0], 400)
+        self.assertEqual(self.request("GET", API + "/sector-etf-penetration", auth=False)[0], 401)
+        status, raw = self.request("GET", API + "/sector-etf-penetration")
+        self.assertEqual(status, 200)
+        self.assertEqual(set(json.loads(raw)), {"current", "mapping", "recent", "recent_since", "recent_etf_count", "gaps", "metadata_issues"})
         for route in ("left-right-info", "hot-sectors-info"):
             self.assertEqual(self.request("GET", API + "/" + route, auth=False)[0], 401)
             with patch("modules.strategy_hermes.stage2.market_bootstrap.fetch", side_effect=AssertionError("no GET collection")):

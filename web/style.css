@@ -334,6 +334,23 @@ button.turnover-amount:hover { background: transparent; color: var(--brand-dark)
 .sector-etf-summary .metric { font-size: clamp(22px,2.4vw,30px); overflow-wrap: anywhere }
 .sector-etf-summary .card:first-child .metric { font-size: clamp(19px,2vw,25px) }
 .sector-etf-scope { font-size: 12px; color: var(--muted); margin: 0 0 16px; line-height: 1.7 }
+.sector-etf-penetration { margin-bottom: 16px }
+.sector-etf-figures { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 12px }
+.sector-etf-figure { display: grid; gap: 2px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; min-width: 0 }
+.sector-etf-figure .metric { font-size: clamp(22px,2.4vw,30px); margin-top: 0 }
+.sector-etf-state { font-size: 13px; font-weight: 550; margin: 0 0 4px }
+.sector-etf-fold { border-top: 1px solid var(--line); font-size: 12px }
+.sector-etf-fold > summary { display: flex; align-items: center; gap: 8px; font-size: 13px; min-height: 44px; padding: 0 }
+.sector-etf-fold > summary > span { margin-left: auto; color: var(--muted); font-weight: 400 }
+.sector-etf-fold > .sector-etf-scope { margin: 0 0 12px }
+.sector-etf-fold .table-scroll { max-height: 320px; overflow: auto; margin-bottom: 12px }
+.sector-etf-changes { list-style: none; padding: 0; margin: 0 0 8px }
+.sector-etf-changes > li { padding: 8px 0; border-top: 1px dashed var(--line); line-height: 1.7 }
+.sector-etf-changes > li > strong { margin-right: 10px; font-weight: 550 }
+.sector-etf-changes p { margin: 4px 0 0 }
+.sector-etf-chips { display: flex; flex-wrap: wrap; gap: 6px }
+.sector-etf-chips > span { padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--brand-light); white-space: nowrap }
+.sector-etf-chips > .muted { background: none; border-style: dashed }
 .sector-etf-panels { align-items: stretch }
 .sector-etf-panels > .card { margin-bottom: 16px }
 .sector-etf-panels progress { accent-color: var(--brand) }
@@ -365,6 +382,8 @@ button.turnover-amount:hover { background: transparent; color: var(--brand-dark)
 .sector-etf-pagination > span { margin-right: auto; font-size: 12px }
 .sector-etf-pagination button { min-width: 84px; font-size: 12px }
 @media (max-width: 600px) {
+  .sector-etf-figures { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px }
+  .sector-etf-figure { padding: 10px }
   .sector-etf-summary > .grid { grid-template-columns: repeat(2,minmax(0,1fr)) }
   .sector-etf-summary .metric { font-size: 24px }
   .sector-etf-summary .card:first-child .metric { font-size: 19px }

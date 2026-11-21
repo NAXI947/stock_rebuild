@@ -422,6 +422,21 @@ function etfCoverageRows(statistics) {
     ["本轮节点",orders.total],["主干配对",tiers.core],["低暴露配对",tiers.below_core],["未知暴露配对",tiers.unknown],
   ];
 }
+const rejectionLabels = {
+  SECTOR_MEMBERS_UNAVAILABLE:"缺板块成分", WEIGHTS_UNVERIFIED:"权重待核验", PRODUCT_RULE_UNVERIFIED:"交易规则待核验",
+  MAINBOARD_LOW_OR_UNKNOWN:"主板权重不足或待核验", EXPOSURE_LOW:"板块暴露不足", CORE_EXPOSURE_LOW:"核心股暴露不足",
+  LIQUIDITY_BELOW_MINIMUM:"流动性不足", AUM_BELOW_MINIMUM:"规模不足", TRADING_SUSPENDED:"停牌",
+  TRADE_UNIT_UNVERIFIED:"交易单位待核验", PRODUCT_IDENTITY_INVALID:"产品身份待核验", PRODUCT_IDENTITY_UNVERIFIED:"产品身份待核验",
+  PRODUCT_OUTSIDE_SCOPE:"产品交易范围不符", PRODUCT_NOT_LISTED:"产品非上市交易状态", TRADING_UNAVAILABLE:"当前暂停交易",
+  USABLE_PRICE_UNAVAILABLE:"有效报价待补", MARKET_DATE_MISMATCH:"行情日期待更新", EOD_OBSERVATION_ONLY:"收盘快照仅供观察",
+  RULE_UNVERIFIED:"交易规则待核验", TRADE_UNIT_CHANGED:"交易单位与冻结规则冲突",
+  RULE_REVIEW_REQUIRED:"产品规则待复核，暂停新入场", SETTLEMENT_RULE_CONFLICT:"结算规则冲突待核验",
+  ENTRY_ADMISSION_UNAVAILABLE:"准入资料读取失败，暂停新买", ENTRY_REFERENCE_UNPUBLISHED:"正式准入资料未发布",
+  NO_OVERLAP_CONFIRMED:"正式板块无正权重交集", WEAK_OVERLAP_REJECTED:"弱关联观察", BROAD_SECTOR_UNATTRIBUTED:"大板块待产业归属",
+  SINGLE_STOCK_CROSSOVER_REJECTED:"单股跨界观察", WEAK_OVERLAP_UPPER_BOUND_REJECTED:"暴露上界低于底线",
+  REPRESENTATIVENESS_UNKNOWN:"代表性待核验", ASSOCIATION_UNCONFIRMED:"关联待核验",
+  EMPTY_AFTER_WEAK_PAIR_STRIP:"弱关联剔除后本轮未选",
+};
 function reportDetail(panel,row,refreshReport) {
   const data=JSON.parse(row.raw);
   const recovery=row.input_meta?.manual_recovery;
@@ -451,21 +466,6 @@ function reportDetail(panel,row,refreshReport) {
   const explain=(hybrid || row.input_meta?.penetration)?.sectors || {};
   const missingWeights=Math.max(0,...Object.values(explain).map(s=>s.coverage_gaps?.weights?.products || 0));
   if (missingWeights) panel.append(elt("p","资料待补：目录"+missingWeights+"只ETF缺可用成分权重，穿透待核验。","muted"));
-  const rejectionLabels = {
-    SECTOR_MEMBERS_UNAVAILABLE:"缺板块成分", WEIGHTS_UNVERIFIED:"权重待核验", PRODUCT_RULE_UNVERIFIED:"交易规则待核验",
-    MAINBOARD_LOW_OR_UNKNOWN:"主板权重不足或待核验", EXPOSURE_LOW:"板块暴露不足", CORE_EXPOSURE_LOW:"核心股暴露不足",
-    LIQUIDITY_BELOW_MINIMUM:"流动性不足", AUM_BELOW_MINIMUM:"规模不足", TRADING_SUSPENDED:"停牌",
-    TRADE_UNIT_UNVERIFIED:"交易单位待核验", PRODUCT_IDENTITY_INVALID:"产品身份待核验", PRODUCT_IDENTITY_UNVERIFIED:"产品身份待核验",
-    PRODUCT_OUTSIDE_SCOPE:"产品交易范围不符", PRODUCT_NOT_LISTED:"产品非上市交易状态", TRADING_UNAVAILABLE:"当前暂停交易",
-    USABLE_PRICE_UNAVAILABLE:"有效报价待补", MARKET_DATE_MISMATCH:"行情日期待更新", EOD_OBSERVATION_ONLY:"收盘快照仅供观察",
-    RULE_UNVERIFIED:"交易规则待核验", TRADE_UNIT_CHANGED:"交易单位与冻结规则冲突",
-    RULE_REVIEW_REQUIRED:"产品规则待复核，暂停新入场", SETTLEMENT_RULE_CONFLICT:"结算规则冲突待核验",
-    ENTRY_ADMISSION_UNAVAILABLE:"准入资料读取失败，暂停新买", ENTRY_REFERENCE_UNPUBLISHED:"正式准入资料未发布",
-    NO_OVERLAP_CONFIRMED:"正式板块无正权重交集", WEAK_OVERLAP_REJECTED:"弱关联观察", BROAD_SECTOR_UNATTRIBUTED:"大板块待产业归属",
-    SINGLE_STOCK_CROSSOVER_REJECTED:"单股跨界观察", WEAK_OVERLAP_UPPER_BOUND_REJECTED:"暴露上界低于底线",
-    REPRESENTATIVENESS_UNKNOWN:"代表性待核验", ASSOCIATION_UNCONFIRMED:"关联待核验",
-    EMPTY_AFTER_WEAK_PAIR_STRIP:"弱关联剔除后本轮未选",
-  };
   const rows=Object.entries(explain).flatMap(([sector,s])=>{
     const name=names[sector] || sector;
     if (s.reason && !s.products?.length) return [hybrid
@@ -824,6 +824,66 @@ function sectorEtfSummary(market) {
   ]),"暂无已保存板块涨跌数据"));
   panes.append(breadth,leaders);group.append(panes);return group;
 }
+function sectorEtfFold(label,count,body) {
+  const fold=elt("details",undefined,"sector-etf-fold"),head=elt("summary",label);
+  head.append(elt("span",panoramaCount(count),"numeric"));fold.append(head,body);return fold;
+}
+function sectorEtfPenetration(data) {
+  const box=card("穿透概览"),current=data?.current || {},mapping=data?.mapping,gaps=data?.gaps || {},recent=Array.isArray(data?.recent)?data.recent:[];
+  box.classList.add("sector-etf-penetration");
+  const grid=elt("div",undefined,"sector-etf-figures");
+  for(const [label,value,of,note] of [
+    ["当前穿透 ETF",current.report_id?current.matched:null,"可入场 "+panoramaCount(current.entry)+" · 仅观察 "+panoramaCount(current.observe)+" · 资料不可用 "+panoramaCount(current.rejected),current.report_at?"最新报告 "+time(current.report_at).slice(0,16)+" · "+panoramaCount(current.sectors)+" 个板块":"暂无已保存报告"],
+    ["完整穿透 ETF",mapping?.reachable,"目录 "+panoramaCount(mapping?.catalog)+" 只 · "+panoramaCount(mapping?.sectors)+" 个板块",mapping?"映射更新 "+time(mapping.available_at).slice(0,16):"暂无已发布映射"],
+    ["近期新增穿透 ETF",mapping?data.recent_etf_count:null,recent.length?"来自 "+recent.length+" 次映射更新":"近期各版本无新增",data?.recent_since?"自 "+time(data.recent_since).slice(0,16)+" 起":"没有可比较的旧版本"],
+    ["缺指数权重 ETF",mapping?gaps.etf_count:null,"涉及 "+panoramaCount(gaps.index_count)+" 个指数",mapping?.weight_dates?.length?"现有权重日期 "+mapping.weight_dates.join("、"):"暂无可用权重"]]){
+    const item=elt("div",undefined,"sector-etf-figure");
+    item.append(elt("span",label,"muted"),elt("strong",panoramaCount(value),"metric"),elt("span",of),elt("span",note,"muted"));grid.append(item);
+  }
+  box.append(grid);
+  if(mapping){
+    const state=[mapping.status?"最近一次维护 "+mapping.status:null,Number.isFinite(mapping.pending)?"待补 "+mapping.pending+" 项":null,
+      mapping.review_required?"待人工复核 "+mapping.review_required+" 项":null].filter(Boolean).join(" · ");
+    if(state)box.append(elt("p",state,"sector-etf-state"));
+    if(mapping.message)box.append(elt("p",mapping.message,"sector-etf-scope"));
+  }
+  if(recent.length){
+    const list=elt("ul",undefined,"sector-etf-changes");
+    for(const row of recent){
+      const item=elt("li"),parts=[row.etf_count?"新增 ETF "+row.etf_count+" 只":null,row.indexes?.length?"新增权重指数 "+row.indexes.length+" 个":null,
+        row.sectors?.length?"新增板块 "+row.sectors.length+" 个":null].filter(Boolean);
+      item.append(elt("strong",time(row.available_at).slice(0,16),"numeric"),elt("span",parts.join(" · ")));
+      if(row.etfs?.length){
+        const names=elt("p",undefined,"sector-etf-chips");
+        for(const etf of row.etfs){
+          const chip=elt("span",(etf.name?etf.name+" ":"")+etf.code);
+          chip.title="跟踪指数 "+(etf.index || "—")+"\n穿透板块："+(etf.sectors?.join("、") || "—");names.append(chip);
+        }
+        if(row.etf_count>row.etfs.length)names.append(elt("span","另 "+(row.etf_count-row.etfs.length)+" 只","muted"));
+        item.append(names);
+      }
+      if(row.sectors?.length)item.append(elt("p","板块："+row.sectors.map(sector=>sector.name || sector.id).join("、"),"muted"));
+      list.append(item);
+    }
+    box.append(sectorEtfFold("近期映射变动",recent.length,list));
+  }
+  if(gaps.indexes?.length)box.append(sectorEtfFold("缺权重的指数（按影响 ETF 数排序）",gaps.index_count,table(["指数","影响 ETF","示例"],gaps.indexes.map(row=>[
+    elt("span",row.index || "未登记跟踪指数","numeric"),elt("span",panoramaCount(row.etfs),"numeric"),
+    (row.samples || []).map(etf=>etf.name || etf.code).join("、")+(row.etfs>(row.samples || []).length?" 等":"")]),"")));
+  const names=rows=>elt("p",rows.map(row=>row.name || row.id).join("、"),"sector-etf-scope");
+  if(gaps.sectors?.length)box.append(sectorEtfFold("映射中没有成分股的板块",gaps.sectors.length,names(gaps.sectors)));
+  if(current.reasons?.length)box.append(sectorEtfFold("最新报告里资料不可用的 ETF",current.rejected,elt("p",current.reasons.map(row=>(rejectionLabels[row.reason] || row.reason)+" "+row.etfs+" 只").join(" · "),"sector-etf-scope")));
+  if(current.empty_sectors?.length){
+    const list=elt("p",undefined,"sector-etf-chips");
+    for(const row of current.empty_sectors){
+      const chip=elt("span",(row.name || row.id)+(row.in_mapping?" · 映射已补":""),row.in_mapping?undefined:"muted");
+      chip.title=[row.id,rejectionLabels[row.reason] || row.reason].filter(Boolean).join("\n");list.append(chip);
+    }
+    box.append(sectorEtfFold("最新报告里穿透为空的板块",current.empty_sectors.length,list));
+  }
+  box.append(elt("p","当前 = 最新报告涉及的板块实际穿透到的 ETF，其中可入场的才出现在下方「已存报告关联」；完整 = 最新映射里有指数权重且能对上板块成分股的 ETF。缺权重的 ETF 不计入穿透。近期新增数长期不动、缺权重数不降或权重日期过旧时，需要补采或修正。","sector-etf-scope"));
+  return box;
+}
 function sectorEtfRows(items,kind) {
   const isEtf=kind==="etfs";
   const columns=isEtf?["ETF / 代码","报价（元）","涨跌幅","成交额（亿元）","成交量（万份）","已存报告关联","来源与时间"]:["板块 / 标识","涨跌幅","板块强度","已存报告关联","来源与时间"];
@@ -867,7 +927,7 @@ function sectorEtfRows(items,kind) {
 }
 async function renderSectorEtf() {
   const token=state.token,screen=$("screen"),pageRoot=elt("div",undefined,"sector-etf-page");
-  const summary=elt("div"),panel=card("板块与 ETF 信息"),results=elt("div"),notice=elt("p","正在读取已保存行情…","sector-etf-notice");
+  const summary=elt("div"),overview=elt("div"),panel=card("板块与 ETF 信息"),results=elt("div"),notice=elt("p","正在读取已保存行情…","sector-etf-notice");
   notice.setAttribute("role","status");
   const search=input("search","q");search.placeholder="搜索名称或代码";search.maxLength=80;search.value=sectorEtfUI.q;
   const ordering=select("sort",[]);
@@ -897,9 +957,17 @@ async function renderSectorEtf() {
   const previous=button("上一页",()=>{sectorEtfUI.page--;return load();});
   const next=button("下一页",()=>{sectorEtfUI.page++;return load();});
   previous.disabled=true;next.disabled=true;pagination.append(pageLabel,previous,next);
-  const reload=button("刷新行情",()=>load());
+  const reload=button("刷新行情",()=>Promise.all([load(),loadOverview()]));
   const head=title("板块与 ETF","查看板块强弱与 ETF 行情",reload);
-  panel.append(tabs,form,elt("p","关联来自已保存报告，展开可查看报告时间。","sector-etf-scope"),notice,results,pagination);pageRoot.append(head,summary,panel);screen.replaceChildren(pageRoot);
+  panel.append(tabs,form,elt("p","关联来自已保存报告，展开可查看报告时间。","sector-etf-scope"),notice,results,pagination);pageRoot.append(head,overview,summary,panel);screen.replaceChildren(pageRoot);
+  async function loadOverview(){
+    try{
+      const data=await api(apiRoot+"/sector-etf-penetration");
+      if(state.page==="sector-etf" && token===state.token && pageRoot.isConnected)overview.replaceChildren(sectorEtfPenetration(data));
+    }catch(error){
+      if(state.page==="sector-etf" && token===state.token && pageRoot.isConnected && !overview.firstChild)overview.replaceChildren(empty("穿透概览读取失败，刷新后重试。"));
+    }
+  }
   async function load(){
     clearTimeout(sectorEtfUI.timer);sectorEtfUI.timer=null;
     if(state.page!=="sector-etf" || token!==state.token || !pageRoot.isConnected)return;
@@ -937,7 +1005,7 @@ async function renderSectorEtf() {
   ordering.addEventListener("change",()=>{sectorEtfUI.sort=ordering.value;sectorEtfUI.page=1;action(load);});
   form.addEventListener("submit",event=>{event.preventDefault();sectorEtfUI.q=search.value.trim();sectorEtfUI.page=1;action(load);});
   sectorEtfUI.reload=()=>composing?undefined:load();
-  await load();
+  await Promise.all([load(),loadOverview()]);
 }
 function researchNumber(value, digits=2) {
   const n=panoramaNumber(value);

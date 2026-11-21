@@ -1,4 +1,5 @@
 """Paginated sector and ETF information from saved local evidence only."""
+from datetime import datetime
 from decimal import Decimal, InvalidOperation, localcontext
 import json
 import math
@@ -6,7 +7,7 @@ from urllib.parse import parse_qs
 
 from .adapter import BOARD
 from .market_stream import read_market
-from .simulator import CODE, PRECISION
+from .simulator import CHINA, CODE, PRECISION
 from .stage2.inputs import read_file
 
 SORTS = {
@@ -284,3 +285,143 @@ def read_info(ledger, query="", fallback=None, mapping_file=None):
     return {"summary": _summary(market, sectors, etfs, report_id, report_at, issues), "kind": kind,
             "items": rows[start:start + page_size], "total": total, "page": page, "page_size": page_size,
             "sort": sort, "q": q, "pages": max(1, (total + page_size - 1) // page_size)}
+
+
+MAPPING_VERSIONS = 12
+LISTED = 40
+_REACH = {}
+
+
+def _reach(body, at):
+    """What one immutable mapping version can penetrate, by the rule the report evaluation applies."""
+    from .stage2.penetration import _dated_weights, _formal_members
+    sectors = {sid: (_text(sector.get("sector_name")) if isinstance(sector, dict) else None,
+                     _formal_members(body, sid, at)[0]) for sid, sector in body["sectors"].items()}
+    bases, reach, missing, names, dates = {}, {}, {}, {}, set()
+    for code, product in body["products"].items():
+        if not isinstance(code, str) or not CODE.fullmatch(code) or not isinstance(product, dict):
+            continue
+        index = product.get("index_code") if isinstance(product.get("index_code"), str) else None
+        names[code] = _text(product.get("name"))
+        if index not in bases:
+            basis = _dated_weights(body["weights"].get(index), at)
+            bases[index] = set(basis[2]) if basis else None
+            if basis:
+                dates.add(basis[0].isoformat())
+        if bases[index] is None:
+            missing.setdefault(index, []).append(code)
+        else:
+            reach[code] = (index, sorted(sid for sid, (_, members) in sectors.items() if members & bases[index]))
+    return dict(reach=reach, missing=missing, names=names, weight_dates=sorted(dates),
+                sectors={sid: name for sid, (name, _) in sectors.items()},
+                empty=sorted(sid for sid, (_, members) in sectors.items() if not members),
+                indexes=sorted(index for index, codes in bases.items() if codes is not None))
+
+
+def _versions(ledger, at, issues):
+    """Newest first. Bodies of versions already digested are not read again."""
+    with ledger._connect() as conn:
+        rows = conn.execute("""SELECT version,available_at,summary FROM maintained_mappings
+            WHERE ns=%s AND available_at<=%s ORDER BY available_at DESC,version DESC LIMIT %s""",
+                            (ledger.ns, at, MAPPING_VERSIONS)).fetchall()
+        wanted = [version for version, _, _ in rows if (ledger.ns, version) not in _REACH]
+        bodies = conn.execute("SELECT version,body FROM maintained_mappings WHERE ns=%s AND version=ANY(%s)",
+                              (ledger.ns, wanted)).fetchall() if wanted else []
+    for version, raw in bodies:
+        try:
+            body = _object(raw)
+            if not all(isinstance(body.get(key), dict) for key in ("sectors", "products", "weights")):
+                raise ValueError("invalid maintained mapping")
+            if len(_REACH) >= 4 * MAPPING_VERSIONS:
+                _REACH.clear()
+            _REACH[ledger.ns, version] = _reach(body, at)
+        except (ValueError, TypeError, KeyError):
+            issues.add("MAPPING_VERSION_INVALID")
+    result = []
+    for version, available_at, raw in rows:
+        if (ledger.ns, version) not in _REACH:
+            continue
+        try:
+            summary = _object(raw)
+        except (ValueError, TypeError):
+            summary = {}
+        if hasattr(available_at, "astimezone"):
+            available_at = available_at.astimezone(CHINA).isoformat(timespec="seconds")
+        result.append((version, available_at, summary, _REACH[ledger.ns, version]))
+    return result
+
+
+def _current(report_id, report_at, report, links, names, mapped):
+    meta = report.get("input_meta", {}) if isinstance(report.get("input_meta"), dict) else {}
+    groups = meta.get("penetration", {}).get("sectors", {}) if isinstance(meta.get("penetration"), dict) else {}
+    groups = groups if isinstance(groups, dict) else {}
+    evaluated, matched, usable, reasons, empty = set(), set(), set(), {}, []
+    for sid, group in groups.items():
+        products = group.get("products") if isinstance(group, dict) else None
+        found = False
+        for product in products if isinstance(products, list) else ():
+            code = product.get("etf") if isinstance(product, dict) else None
+            if not isinstance(code, str) or not CODE.fullmatch(code):
+                continue
+            found = True
+            evaluated.add(code)
+            if product.get("matched") is True or isinstance(product.get("matched"), list) and product["matched"]:
+                matched.add(code)
+            if _rejected(product):
+                for reason in product.get("rejection_reasons") if isinstance(product.get("rejection_reasons"), list) else ():
+                    if isinstance(reason, str):
+                        reasons.setdefault(reason, set()).add(code)
+            else:
+                usable.add(code)
+        if not found:
+            empty.append(dict(id=sid, name=names.get(sid), in_mapping=sid in mapped,
+                              reason=_text(group.get("reason")) if isinstance(group, dict) else None))
+    entry = {code for _, code in links}
+    rejected = evaluated - usable - entry
+    return dict(report_id=report_id, report_at=report_at, sectors=len(groups), evaluated=len(evaluated),
+                matched=len(matched), entry=len(entry), observe=len(matched - entry - rejected), rejected=len(rejected),
+                reasons=[dict(reason=reason, etfs=len(codes & rejected)) for reason, codes in
+                         sorted(reasons.items(), key=lambda item: (-len(item[1] & rejected), item[0])) if codes & rejected],
+                empty_sectors=sorted(empty, key=lambda row: row["id"]))
+
+
+def read_penetration(ledger, now=None):
+    """Sector to ETF penetration: the latest report, the latest mapping, and what recent mapping versions added."""
+    at, issues = now or datetime.now(CHINA), set()
+    report_id, report_at, report, links, _ = _saved(ledger, (), issues)
+    versions = _versions(ledger, at, issues)
+    names = _report_sector_names(report)
+    mapping, recent, gaps, mapped = None, [], dict(indexes=[], index_count=0, etf_count=0, sectors=[]), set()
+    if versions:
+        version, available_at, summary, latest = versions[0]
+        names = latest["sectors"] | {sid: name for sid, name in names.items() if name}
+        reached = {code for code, (_, sectors) in latest["reach"].items() if sectors}
+        mapped = set(latest["sectors"]) - set(latest["empty"])
+        queue = summary.get("retry_queue") if isinstance(summary.get("retry_queue"), dict) else {}
+        mapping = dict(version=version, available_at=available_at, catalog=len(latest["names"]),
+                       weighted=len(latest["reach"]), reachable=len(reached), sectors=len(latest["sectors"]),
+                       indexes=len(latest["indexes"]) + len(latest["missing"]), weighted_indexes=len(latest["indexes"]),
+                       weight_dates=latest["weight_dates"], status=_text(summary.get("status")),
+                       message=_text(summary.get("message")), pending=queue.get("pending_count"),
+                       review_required=queue.get("review_required"))
+        ranked = sorted(latest["missing"].items(), key=lambda item: (-len(item[1]), item[0] or ""))
+        gaps = dict(index_count=len(ranked), etf_count=sum(len(codes) for _, codes in ranked),
+                    indexes=[dict(index=index, etfs=len(codes),
+                                  samples=[dict(code=code, name=latest["names"].get(code)) for code in sorted(codes)[:3]])
+                             for index, codes in ranked[:LISTED]],
+                    sectors=[dict(id=sid, name=latest["sectors"].get(sid)) for sid in latest["empty"]])
+        for (version, available_at, _, new), (_, _, _, old) in zip(versions, versions[1:]):
+            before = {code for code, (_, sectors) in old["reach"].items() if sectors}
+            added = sorted(code for code, (_, sectors) in new["reach"].items() if sectors and code not in before)
+            sectors = sorted(set(new["sectors"]) - set(old["sectors"]))
+            indexes = sorted(set(new["indexes"]) - set(old["indexes"]))
+            if added or sectors or indexes:
+                recent.append(dict(version=version, available_at=available_at, etf_count=len(added),
+                                   etfs=[dict(code=code, name=new["names"].get(code), index=new["reach"][code][0],
+                                              sectors=[new["sectors"].get(sid) or sid for sid in new["reach"][code][1]])
+                                         for code in added[:LISTED]],
+                                   sectors=[dict(id=sid, name=new["sectors"].get(sid)) for sid in sectors], indexes=indexes))
+    since = versions[-1][1] if versions else None
+    return dict(current=_current(report_id, report_at, report, links, names, mapped), mapping=mapping, recent=recent,
+                recent_since=since, recent_etf_count=sum(row["etf_count"] for row in recent), gaps=gaps,
+                metadata_issues=sorted(issues))

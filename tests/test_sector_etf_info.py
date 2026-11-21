@@ -233,3 +233,102 @@ class SectorEtfInfoTest(TestCase):
         self.assertEqual(result["items"], [])
         self.assertEqual((result["total"], result["pages"]), (0, 1))
         self.assertIsNone(result["summary"]["etf_amount_cny"])
+
+
+def mapping(sectors, products, weights):
+    rows = lambda codes: [dict(code=code, weight=str(Decimal(1) / len(codes))) for code in codes]
+    return dict(schema_version="stock-v4-etf-mapping-v1",
+                sectors={sid: dict(sector_name=name, members=members, as_of_date="2026-11-12") for sid, (name, members) in sectors.items()},
+                products={code: dict(name=name, index_code=index) for code, (name, index) in products.items()},
+                weights={index: dict(as_of_date="2026-10-30", complete=True, rows=rows(codes)) for index, codes in weights.items()})
+
+
+class MappingStore(Store):
+    def __init__(self, versions):
+        super().__init__()
+        self.versions = versions
+        self.bodies = []
+
+    def execute(self, sql, args=()):
+        if "maintained_mappings" not in sql:
+            return super().execute(sql, args)
+        assert sql.strip().startswith("SELECT") and args[0] == self.ns
+        if "body" in sql:
+            self.bodies.append(sorted(args[1]))
+            self.rows = [(version, json.dumps(body)) for version, _, _, body in self.versions if version in args[1]]
+        else:
+            self.rows = [(version, at, json.dumps(summary)) for version, at, summary, _ in reversed(self.versions)][:args[2]]
+        return self
+
+
+class SectorEtfPenetrationTest(TestCase):
+    NOW = datetime.fromisoformat("2026-11-21T10:00:00+08:00")
+
+    def setUp(self):
+        info._REACH.clear()
+        products = {"512800.SH": ("银行ETF", "399986.SZ"), "512480.SH": ("半导体ETF", "H30184.CSI"),
+                    "158001.SZ": ("宽基ETF", "000905.SH"), "158003.SZ": (None, "000905.SH"), "158005.SZ": ("无指数ETF", None)}
+        old = mapping({BANK: ("银行", ["600036.SH"])}, products, {"399986.SZ": ["600036.SH", "601398.SH"]})
+        new = mapping({BANK: ("银行", ["600036.SH"]), CHIP: ("芯片", ["688256.SH"]), CLOUD: ("AI应用", [])}, products,
+                      {"399986.SZ": ["600036.SH", "601398.SH"], "H30184.CSI": ["688256.SH"], "931151.CSI": ["300750.SZ"]})
+        new["products"]["159999.SZ"] = dict(name="电池ETF", index_code="931151.CSI")
+        self.store = MappingStore([
+            ("maintained-old", "2026-11-18T10:00:00+08:00", {"status": "OK"}, old),
+            ("maintained-new", "2026-11-20T14:18:00+08:00",
+             {"status": "PARTIAL", "message": "资料更新0项", "retry_queue": {"pending_count": 3, "review_required": 1}}, new)])
+
+    def test_current_full_recent_and_gaps_follow_the_saved_report_and_mapping(self):
+        view = info.read_penetration(self.store, self.NOW)
+        self.assertEqual(view["current"], dict(
+            report_id="saved-report-old", report_at=REPORT_AT, sectors=3, evaluated=3, matched=2, entry=1, observe=0, rejected=1,
+            reasons=[dict(reason="PRODUCT_RULE_UNVERIFIED", etfs=1)], empty_sectors=[]))
+        self.assertEqual(view["mapping"], dict(
+            version="maintained-new", available_at="2026-11-20T14:18:00+08:00", catalog=6, weighted=3, reachable=2,
+            sectors=3, indexes=5, weighted_indexes=3, weight_dates=["2026-10-30"], status="PARTIAL", message="资料更新0项",
+            pending=3, review_required=1))
+        self.assertEqual(view["recent"], [dict(
+            version="maintained-new", available_at="2026-11-20T14:18:00+08:00", etf_count=1,
+            etfs=[dict(code="512480.SH", name="半导体ETF", index="H30184.CSI", sectors=["芯片"])],
+            sectors=[dict(id=CHIP, name="芯片"), dict(id=CLOUD, name="AI应用")], indexes=["931151.CSI", "H30184.CSI"])])
+        self.assertEqual((view["recent_since"], view["recent_etf_count"]), ("2026-11-18T10:00:00+08:00", 1))
+        self.assertEqual(view["gaps"], dict(
+            index_count=2, etf_count=3, sectors=[dict(id=CLOUD, name="AI应用")],
+            indexes=[dict(index="000905.SH", etfs=2, samples=[dict(code="158001.SZ", name="宽基ETF"), dict(code="158003.SZ", name=None)]),
+                     dict(index=None, etfs=1, samples=[dict(code="158005.SZ", name="无指数ETF")])]))
+        self.assertEqual(view["metadata_issues"], [])
+
+    def test_report_sectors_without_products_are_named_and_bodies_are_read_once(self):
+        saved = report()
+        saved["input_meta"]["penetration"]["sectors"][CLOUD] = {"products": [], "reason": "SECTOR_MEMBERS_UNAVAILABLE"}
+        self.store.latest = ("saved-report-old", REPORT_AT, json.dumps(saved))
+        view = info.read_penetration(self.store, self.NOW)
+        saved["input_meta"]["penetration"]["sectors"]["kaipanla:801464"] = {"products": []}
+        saved["input_meta"]["penetration"]["sectors"][BANK]["products"].append(
+            {"etf": "512480.SH", "matched": True, "rejection_reasons": [], "representativeness": {"entry_allowed": False}})
+        self.store.latest = ("saved-report-old", REPORT_AT, json.dumps(saved))
+        view = info.read_penetration(self.store, self.NOW)
+        self.assertEqual(view["current"]["empty_sectors"], [
+            dict(id="kaipanla:801464", name=None, in_mapping=False, reason=None),
+            dict(id=CLOUD, name="AI应用", in_mapping=False, reason="SECTOR_MEMBERS_UNAVAILABLE")])
+        self.assertEqual([view["current"][key] for key in ("evaluated", "matched", "entry", "observe", "rejected", "reasons")],
+                         [2, 2, 1, 1, 0, []])
+        info.read_penetration(self.store, self.NOW)
+        self.assertEqual(self.store.bodies, [["maintained-new", "maintained-old"]])
+
+    def test_no_mapping_no_report_and_invalid_versions_stay_empty(self):
+        self.store.versions[1] = ("maintained-new", "2026-11-20T14:18:00+08:00", {}, {"sectors": []})
+        self.store.latest = None
+        view = info.read_penetration(self.store, self.NOW)
+        self.assertEqual(view["current"], dict(report_id=None, report_at=None, sectors=0, evaluated=0, matched=0, entry=0, observe=0,
+                                               rejected=0, reasons=[], empty_sectors=[]))
+        self.assertEqual((view["mapping"]["version"], view["mapping"]["reachable"], view["recent"]), ("maintained-old", 1, []))
+        self.assertEqual(view["metadata_issues"], ["MAPPING_VERSION_INVALID"])
+        self.store.versions = []
+        info._REACH.clear()
+        view = info.read_penetration(self.store, self.NOW)
+        self.assertEqual((view["mapping"], view["recent"], view["recent_since"], view["gaps"]["index_count"]), (None, [], None, 0))
+
+    def test_weights_dated_after_now_do_not_count(self):
+        self.store.versions[1][3]["weights"]["H30184.CSI"]["as_of_date"] = "2026-11-30"
+        view = info.read_penetration(self.store, self.NOW)
+        self.assertEqual((view["mapping"]["weighted"], view["mapping"]["reachable"], view["recent_etf_count"]), (2, 1, 0))

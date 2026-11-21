@@ -330,6 +330,9 @@ def _route(env, ledger, queue, calendar, fallback, touch_file, eod_file, paused,
     if method=="GET" and path==API+"/sector-etf-info":
         from .sector_etf_info import read_info
         return 200,read_info(ledger,env.get("QUERY_STRING",""),fallback,mapping_file)
+    if method=="GET" and path==API+"/sector-etf-penetration":
+        from .sector_etf_info import read_penetration
+        return 200,read_penetration(ledger)
     if method=="GET" and path==API+"/left-right-info":
         from .left_right_info import read_info
         return 200,read_info(ledger,env.get("QUERY_STRING",""),eod_file,lr_history_file)

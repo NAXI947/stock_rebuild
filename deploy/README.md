@@ -28,6 +28,9 @@ bash deploy/release.sh apply /absolute/path/release.env --automation /opt/1panel
 `ENABLE_OFFICIAL_COLLECTION`、`ENABLE_QQ_PUSH`、`HERMES_TRIGGER_MODE` 和 `ETF_REPRESENTATIVENESS_MODE`，
 以及 `.stock-v4-releases/<发布编号>/` 下存在 `automation.env`。设置项见 [自动研判部署](AUTOMATION.md)。
 
+自动化设置随发布记录一起保存，rollback 用的是上一条记录自己的设置。上一条记录发布时没带 `--automation`，
+rollback 之后自动化同样是关闭的；这种情况改用 apply 重新发布目标版本并带上设置文件。
+
 check 校验清单、令牌文件、交易日历权限、目录、Docker 网络及 Compose 配置。首次 apply 接受既有 .release.env 的默认占位内容，同时检查是否已有同名容器或 Compose 项目。成功发布后，脚本使用 .stock-v4-releases 下的发布清单和对应 Compose 快照作为应用版本记录。
 
 apply 在维护窗口预拉取缺失镜像，写入共享暂停标志，停止接收新的写入和 worker 任务。发布脚本先在旧版 backend 内执行只读等待，检查当前运行空间的共享后台队列（LR 补采、资料更新、ETF 维护）及手动回测队列；后台采集在检查点回到 QUEUED，已运行的有限时手动回测完成后退出 RUNNING。两队列持续空闲 1 秒后，才请求 worker 在至多 150 秒内退出。前置等待上限为 140 秒，查询失败或等待超时会保留暂停标志和运行中的 worker，并中止本次发布，供操作者检查后使用 recover 恢复。

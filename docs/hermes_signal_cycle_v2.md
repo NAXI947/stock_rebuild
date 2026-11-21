@@ -105,7 +105,8 @@ docker exec -i stock-v4-backend python - < tools/shadow_exit_v2.py     # 镜像�
 ## 在途 v1 周期迁移
 
 2026-11-21 用户授权（`CLAUDE.md` 第 32 条）：执行服务器当时在途的 512800、512480、588100 三笔 v1 周期改按 v2 管理。
-这是一次性例外，`tools/migrate_cycles_to_exit_v2.py` 只处理命令行点名的周期，不带 `--apply` 时只读。
+这是一次性例外，`tools/migrate_cycles_to_exit_v2.py` 只处理命令行点名、且周期编号在工具内 `AUTHORISED` 名单里的这三笔，
+其他周期一律拒绝；不带 `--apply` 时只读。
 
 ```bash
 python -B -m tools.migrate_cycles_to_exit_v2 --env-file /absolute/.env --etf 512800.SH --atr 512800.SH=0.018764@2026-11-12

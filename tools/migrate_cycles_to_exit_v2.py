@@ -22,6 +22,10 @@ from modules.strategy_hermes.signal_cycle import build_exit_plan, pending
 from modules.strategy_hermes.simulator import CHINA, PRECISION, V1, Calendar, Rules, decimal, moment, shares
 
 MIGRATED = "MIGRATED_FROM_V1"
+# The three cycles of the 2026-11-21 authorisation; any other v1 cycle keeps its frozen rule.
+AUTHORISED = {"512800.SH": "887665adce5a7c6e27473e5d500d207ff01e776fa8c3a221737cbf198dad80d9",
+              "512480.SH": "fa0a2d9b4472b27390effb9d05587d93b88c0c174588b21e08caf5a1a4319c42",
+              "588100.SH": "fdadecf44d5c3ae652b9048a01814e2e162766205a7fd368612a9eb4610e694d"}
 
 
 def migrate(cycle, events, calendar, rules, inputs, at):
@@ -119,6 +123,8 @@ def run(ledger, codes, atr, rules, now, apply):
             if code not in found:
                 raise ValueError(f"{code}: no active cycle")
             cid, cycle = found[code]
+            if AUTHORISED.get(code) != cid:
+                raise ValueError(f"{code}: this cycle is not covered by the 2026-11-21 authorisation")
             if cycle["rule"]["version"] == rules.version:
                 rows.append(dict(etf=code, cycle_id=cid, status="ALREADY_V2"))
                 continue

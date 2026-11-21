@@ -1108,11 +1108,16 @@ function rulePercent(value) {
 function flowChain(steps, label) {
   const chain=elt("ol",undefined,"flow-chain");
   if (label) chain.setAttribute("aria-label",label);
-  for (const [name,detail,otherwise] of steps) {
-    const step=elt("li",undefined,"flow-step"),node=elt("div",undefined,"flow-node");
-    node.append(elt("strong",name));
+  const box=(name,detail)=>{
+    const node=elt("div",undefined,"flow-node");node.append(elt("strong",name));
     if (detail) node.append(elt("span",detail));
-    step.append(node);
+    return node;
+  };
+  for (const [name,detail,otherwise] of steps) {
+    const step=elt("li",undefined,"flow-step");
+    // A step given as a list of [name, detail] pairs is a set of alternative outcomes, stacked.
+    if (Array.isArray(name)) { const split=elt("div",undefined,"flow-split");split.append(...name.map(pair=>box(...pair)));step.append(split); }
+    else step.append(box(name,detail));
     if (otherwise) {
       const drop=elt("p",undefined,"flow-drop");
       drop.append(elt("b","否则"),document.createTextNode(otherwise));step.append(drop);
@@ -1213,8 +1218,7 @@ function backtestRulesNotice(rule) {
   trade.append(flowChain([
     ["登记卖单","全清覆盖未成交的减仓；减仓按交易单位向下取整"],
     ["等待成交","由之后第一条有效报价成交，遵守 T+1；每轮后 30、120、300 秒补价至多 3 次，轮次失败时也为卖单补价"],
-    ["减仓成交","余仓继续持有，回到上面的判定"],
-    ["全清成交","周期结束，计入胜率与收益"],
+    [[["减仓成交","余仓继续持有，回到上面的判定"],["全清成交","周期结束，计入胜率与收益"]]],
   ],"成交"));
   if (exits) trade.append(exitLineTable(exits));
 

@@ -93,6 +93,7 @@ def _overview(ledger, fallback, calendar):
     return dict(environment=ledger.settings.env,input_kind=ledger.origin,slots=SLOTS,
                 reports=reports,rotation_window=window,rotation=view.get("rotation",{}),cycles=view.get("cycles",[]),
                 evaluation=view.get("evaluation",{}), evaluation_recent=view.get("evaluation_recent"),
+                new_cycle_rule=ledger._rules().snapshot(),
                 market=_background(read_market(ledger,fallback)))
 
 

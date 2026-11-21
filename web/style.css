@@ -55,14 +55,52 @@ input[type=file] { padding: 8px; max-width: 100% }
 .backtest-rules-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 18px 20px 0 }
 .backtest-rules-heading h2 { font-size: 17px; line-height: 1.5 }
 .backtest-rules-intro { padding: 4px 20px 16px; color: var(--muted); font-size: 13px }
-.backtest-rules-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,260px),1fr)); gap: 20px; padding: 0 20px 20px }
-.backtest-rule { min-width: 0 }
-.backtest-rule h3 { display: flex; align-items: center; gap: 8px; font-size: 15px }
 .backtest-rule-number { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--brand-light); color: var(--brand-dark); font: 600 12px var(--mono) }
-.backtest-rule-trigger { margin: 10px 0 8px; color: var(--brand-dark); font-weight: 650; font-size: 14px }
-.backtest-rule ul { margin: 0; padding-left: 17px; color: var(--ink); font-size: 13px; line-height: 1.8 }
-.backtest-rule li + li { margin-top: 6px }
-.backtest-rule li::marker { color: var(--muted) }
+.flow-section { padding: 0 20px 20px }
+.flow-section + .flow-section { padding-top: 18px; border-top: 1px solid var(--line) }
+.flow-section h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 15px }
+.flow-chain { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0,1fr); grid-template-rows: auto auto; column-gap: 26px; margin: 0; padding: 0; list-style: none }
+.flow-step { display: grid; grid-row: span 2; grid-template-rows: subgrid; row-gap: 6px; min-width: 0 }
+.flow-node { position: relative; display: grid; align-content: start; gap: 4px; padding: 10px 12px; border: 1px solid #bcd6d2; border-radius: var(--control); background: var(--brand-light); font-size: 12px; line-height: 1.6 }
+.flow-node strong { color: var(--brand-dark); font-size: 14px }
+.flow-step + .flow-step .flow-node::before, .flow-branch::before, .flow-fork + .flow-chain::before { position: absolute; color: var(--muted); font: 600 15px/1 var(--mono) }
+.flow-step + .flow-step .flow-node::before { content: "→"; left: -21px; top: calc(50% - 8px) }
+.flow-drop { align-self: start; margin: 0; padding-left: 10px; border-left: 2px dashed #d9c9a3; color: var(--muted); font-size: 12px; line-height: 1.6 }
+.flow-drop b { margin-right: 6px; color: var(--warm); font-weight: 650 }
+.flow-fork { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,340px),1fr)); gap: 16px; margin-top: 28px }
+.flow-branch { position: relative; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--control); background: var(--background) }
+.flow-branch::before { content: "↓"; top: -21px; left: calc(50% - 5px) }
+.flow-branch h4 { margin: 0; font-size: 14px }
+.flow-branch-context { margin: 2px 0 8px; color: var(--muted); font-size: 12px }
+.flow-rules { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; counter-reset: flow-rule }
+.flow-rule { display: grid; grid-template-columns: 22px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--control); background: var(--paper); counter-increment: flow-rule }
+.flow-rule::before { content: counter(flow-rule); display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--brand-light); color: var(--brand-dark); font: 600 12px var(--mono) }
+.flow-rule-condition { display: grid; min-width: 0; font-size: 12px; line-height: 1.6 }
+.flow-rule-condition strong { font-size: 13px }
+.flow-rule-condition span { color: var(--muted) }
+.flow-action { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 650; white-space: nowrap }
+.flow-action::before { content: "→"; font-family: var(--mono); font-weight: 600 }
+.flow-action-exit { background: #fdecea; color: var(--up) }
+.flow-action-reduce { background: #fbf1dd; color: var(--warm) }
+.flow-action-hold { background: var(--brand-light); color: var(--brand-dark) }
+.flow-fork + .flow-chain { position: relative; margin-top: 28px }
+.flow-fork + .flow-chain::before { content: "↓"; top: -21px; left: 24px }
+.flow-table-wrap { margin-top: 16px; overflow-x: auto }
+.flow-table { width: 100%; min-width: 660px; border-collapse: collapse; font-size: 12px; line-height: 1.6 }
+.flow-table th, .flow-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top }
+.flow-table thead th { background: var(--background); font-size: 13px }
+.flow-table tbody th { color: var(--muted); font-weight: 600; white-space: nowrap }
+@media (max-width: 1240px) {
+  .flow-chain { grid-auto-flow: row; grid-template-rows: none; grid-template-columns: minmax(0,1fr); row-gap: 26px }
+  .flow-step { grid-row: auto; grid-template-rows: none; grid-template-columns: minmax(0,3fr) minmax(0,2fr); column-gap: 12px; align-items: center }
+  .flow-step > .flow-node:only-child { grid-column: 1 / -1 }
+  .flow-step + .flow-step .flow-node::before { content: "↓"; left: 24px; top: -21px }
+}
+@media (max-width: 600px) {
+  .flow-step { grid-template-columns: minmax(0,1fr) }
+  .flow-rule { grid-template-columns: 22px minmax(0,1fr) }
+  .flow-action { grid-column: 2; justify-self: start }
+}
 .backtest-rules-foot { padding: 12px 20px; border-top: 1px solid var(--line); background: var(--background); color: var(--muted); font-size: 12px; line-height: 1.8 }
 .backtest-rules-foot p + p { margin-top: 4px }
 .backtest-rules-foot strong { margin-right: 10px; color: var(--ink); font-weight: 650 }

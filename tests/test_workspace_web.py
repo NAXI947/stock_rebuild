@@ -38,6 +38,8 @@ class WorkspaceWebTest(unittest.TestCase):
             self.assertEqual(status,200,raw)
             result=json.loads(raw)
             self.assertEqual(len(result["cycles"]),50)
+            self.assertEqual(result["new_cycle_rule"],self.ledger.settings.rules().snapshot())
+            self.assertEqual(result["new_cycle_rule"]["version"],"hermes_signal_cycle_v1")
             self.assertEqual(result["evaluation"]["GROSS"]["closed"],53)
             self.assertEqual(result["evaluation_recent"]["closed"],53)
             self.assertEqual(float(result["evaluation"]["profit_statistics"]["GROSS"]["average_profit"]),500)

@@ -1100,46 +1100,134 @@ async function renderHotSectors() {
   }
   const composing=researchSearch(search,form,hotUI,load);for(const control of [days,limit])control.addEventListener("change",()=>{hotUI[control.name]=control.value;action(load);});hotUI.reload=()=>composing()?undefined:load();await load();
 }
-function backtestRulesNotice() {
+// Numbers come from the rule snapshot the server will give the next new cycle, never from this file.
+function rulePercent(value) {
+  const n=Number(value);
+  return Number.isFinite(n) ? (n*100).toFixed(1)+"%" : "—";
+}
+function flowChain(steps, label) {
+  const chain=elt("ol",undefined,"flow-chain");
+  if (label) chain.setAttribute("aria-label",label);
+  for (const [name,detail,otherwise] of steps) {
+    const step=elt("li",undefined,"flow-step"),node=elt("div",undefined,"flow-node");
+    node.append(elt("strong",name));
+    if (detail) node.append(elt("span",detail));
+    step.append(node);
+    if (otherwise) {
+      const drop=elt("p",undefined,"flow-drop");
+      drop.append(elt("b","否则"),document.createTextNode(otherwise));step.append(drop);
+    }
+    chain.append(step);
+  }
+  return chain;
+}
+function flowBranch(name, context, rows) {
+  const branch=elt("section",undefined,"flow-branch"),list=elt("ol",undefined,"flow-rules");
+  branch.append(elt("h4",name),elt("p",context,"flow-branch-context"));
+  for (const [label,condition,action,tone] of rows) {
+    const row=elt("li",undefined,"flow-rule"),copy=elt("div",undefined,"flow-rule-condition");
+    copy.append(elt("strong",label),elt("span",condition));
+    row.append(copy,elt("span",action,"flow-action flow-action-"+tone));list.append(row);
+  }
+  branch.append(list);
+  return branch;
+}
+function exitLineTable(rule) {
+  const order=["BEAR_DEFENSE","RANGE_ROTATION","BULL_OFFENSE"],table=elt("table",undefined,"flow-table");
+  const head=table.createTHead().insertRow();head.append(elt("th","各线取值"));
+  for (const key of order) { const cell=elt("th",regimes[key][0],"regime-text-"+regimes[key][1]);cell.scope="col";head.append(cell); }
+  const body=table.createTBody(),bull=rule.regime_bull_volume_ratio,bear=rule.regime_bear_volume_ratio;
+  const line=key=>row=>row[key][0]+" × ATR20，限 "+rulePercent(row[key][1])+"–"+rulePercent(row[key][2]);
+  const rows=[
+    ["判定档位",key=>({BEAR_DEFENSE:"各指数收盘低于 MA20，且任一 MA20 下行或量能比 ≤ "+bear,
+      RANGE_ROTATION:"其余情况；指数数据不足时也按本档并标注",
+      BULL_OFFENSE:"各指数收盘高于 MA20、MA20 上行，且量能比 ≥ "+bull})[key]],
+    ["止损线",line("stop_loss")],["移动止盈启动线",line("trail_start")],["自峰值回撤线",line("trail_drawdown")],
+    ["目标止盈线",line("target_reduce")],
+    ["滞涨退出",row=>"T+"+row.stagnant_days+" 起浮盈低于 +"+rulePercent(row.stagnant_return)],
+    ["持有上限",row=>"T+"+row.max_days],
+  ];
+  for (const [label,value] of rows) {
+    const tr=body.insertRow(),name=elt("th",label);name.scope="row";tr.append(name);
+    for (const key of order) tr.append(elt("td",label==="判定档位" ? value(key) : value(rule.exit_table[key])));
+  }
+  const wrap=elt("div",undefined,"flow-table-wrap");wrap.append(table);
+  return wrap;
+}
+function backtestRulesNotice(rule) {
+  const exits=rule?.exit_table ? rule : null,half=rulePercent(rule?.reduce_ratio ?? "0.50").replace(".0%","%");
   const notice=elt("aside",undefined,"backtest-rules");
   notice.setAttribute("aria-labelledby","backtest-rules-title");
   const heading=elt("div",undefined,"backtest-rules-heading"),name=elt("h2","板块穿透 ETF · 自动模拟规则");
   name.id="backtest-rules-title";
-  heading.append(name,elt("span","规则说明","tag"));
-  notice.append(heading,elt("p","适用于自动周期；手动组合按您设置的节点执行。","backtest-rules-intro"));
-  const columns=elt("div",undefined,"backtest-rules-grid");
-  const rules=[
-    ["准入条件","新增 / 加强 · AI 明确选中",[
-      "板块方向有效，AI选中具有成分穿透或已核验板块—指数关联的ETF。",
-      "境内被动行业或主题ETF的身份、实际交易规则、交易单位及当日可用报价通过核验；规则待复核时暂停新入场。",
-      "同一ETF只保留一个活动周期；“维持”用于观察或继续持仓，自动模式不加仓。",
-    ]],
-    ["减仓条件","首次转弱 · 目标 50%",[
-      "本周期绑定的板块首次明确转弱，登记当时持仓50%的减仓目标。",
-      "按该ETF交易单位向下取整，同一周期只登记一次减仓目标。",
-      "未成交份额继续等待执行，后续转强时保留已登记的待卖目标。",
-    ]],
-    ["清仓条件","明确退潮 · 全部剩余持仓",[
-      "本周期绑定的板块明确退潮，登记卖出全部剩余份额。",
-      "清仓可直接触发，并覆盖尚未完成的减仓目标。",
-      "卖完后结束周期；待买尚未成交时出现转弱或退潮，则撤销买入。",
-    ]],
-  ];
-  for (const [index,[label,trigger,items]] of rules.entries()) {
-    const section=elt("section",undefined,"backtest-rule"),title=elt("h3"),number=elt("span",String(index+1).padStart(2,"0"),"backtest-rule-number");
-    number.setAttribute("aria-hidden","true");title.append(number,document.createTextNode(label));
-    const list=elt("ul");for (const item of items) list.append(elt("li",item));
-    section.append(title,elt("p",trigger,"backtest-rule-trigger"),list);columns.append(section);
+  heading.append(name,elt("span",rule?.version ? "新周期规则 "+rule.version : "规则说明","tag"));
+  notice.append(heading,elt("p","适用于自动周期；手动组合按您设置的节点执行。每个周期开仓时冻结当时的规则，下方为之后新开周期使用的规则。","backtest-rules-intro"));
+
+  const screen=elt("section",undefined,"flow-section"),screenTitle=elt("h3");
+  screenTitle.append(elt("span","01","backtest-rule-number"),document.createTextNode("筛选逻辑 · 什么情况下买入"));
+  screen.append(screenTitle,flowChain([
+    ["五轮研判","09:35、10:35、13:05、14:05、14:30，AI 逐板块判断方向"],
+    ["板块方向","本轮为新增或加强","维持只观察或继续持仓，不加仓；转弱、退潮不买"],
+    ["AI 选 ETF","从已冻结的板块—指数关联里明确选出，每板块至多 3 只","未选中或引用有误，不入场"],
+    ["代表性","板块成分与指数权重的重合未被否决；成员不少于 300 只的大板块须有已发布的产业归属或显式关联","仅作观察项"],
+    ["资料核验","境内被动行业/主题 ETF 的身份、交易规则、交易单位、上市状态和当日报价均已核验","待复核期间暂停新开仓"],
+    ["活动周期","该 ETF 当前没有未结束的周期","沿用原周期，不重复开仓"],
+    ["登记买入","由节点之后第一条有效报价成交，资金须够一手及费用","成交前板块转弱或退潮，撤销买入"],
+  ],"筛选逻辑"));
+
+  const trade=elt("section",undefined,"flow-section"),tradeTitle=elt("h3");
+  tradeTitle.append(elt("span","02","backtest-rule-number"),document.createTextNode("交易逻辑 · 买入后怎么卖"));
+  trade.append(tradeTitle);
+  const report=[["明确退潮","绑定板块被判为退潮","全清","exit"]];
+  if (exits) {
+    trade.append(flowChain([
+      ["买入成交","成本取实际成交价，当日买入的份额次日才可卖"],
+      ["冻结退出计划","按买入前一交易日的大盘档位（"+(exits.regime_mode==="DUAL" ? "沪深300 + 中证1000" : "上证指数")+"）和该 ETF 的 ATR20 算出各线，之后不再变"],
+      ["持仓","之后每条报价、每份报告各判一次，先撮合已有订单再判规则"],
+    ],"开仓"));
+    const quote=[
+      ["成本止损","浮盈 ≤ −止损线","全清","exit"],
+      ["余仓保本","已减过仓，峰值浮盈到过 +"+rulePercent(exits.breakeven_arm_return)+" 或已目标止盈，现价 ≤ 成本 × "+exits.breakeven_buffer,"全清","exit"],
+      ["移动止盈","峰值浮盈 ≥ 启动线，且自峰值回撤 ≥ 回撤线","全清","exit"],
+    ];
+    if (exits.time_exit_enabled) quote.push(["到期退出","14:05 起：持有交易日到上限；或到滞涨天数且浮盈低于滞涨线","全清","exit"]);
+    quote.push(["目标止盈","未减过仓，浮盈 ≥ 目标线","减"+half+"，并启用保本","reduce"]);
+    report.push(["首次转弱","绑定板块首次被判转弱，同一周期只减一次","减"+half,"reduce"],
+      ["再次转弱","跨交易日第 "+exits.weak_exit_trade_days+" 次转弱，同一天多次只计一次","全清","exit"]);
+    if (exits.bear_early_weak_exit) report.push(["弱势档早衰","弱势档、保本未启用、成交次日起现价低于成本时首次转弱","全清","exit"]);
+    report.push(["转强或维持","转弱计数清零；待核实或本轮未覆盖则不变","继续持有","hold"]);
+    const fork=elt("div",undefined,"flow-fork");
+    fork.append(flowBranch("每条报价","五轮采样和轮后补价；自上而下判，命中第一条即停",quote),
+      flowBranch("每份研判报告","只看本周期绑定的板块",report));
+    trade.append(fork);
+  } else {
+    trade.append(flowChain([
+      ["买入成交","成本取实际成交价，当日买入的份额次日才可卖"],
+      ["持仓","只由研判报告触发卖出，没有按价格或持有天数的退出"],
+    ],"开仓"));
+    report.push(["首次转弱","绑定板块首次被判转弱，同一周期只减一次","减"+half,"reduce"],
+      ["转强或维持","已登记的待卖目标保留","继续持有","hold"]);
+    const fork=elt("div",undefined,"flow-fork");fork.append(flowBranch("每份研判报告","只看本周期绑定的板块",report));
+    trade.append(fork);
   }
+  trade.append(flowChain([
+    ["登记卖单","全清覆盖未成交的减仓；减仓按交易单位向下取整"],
+    ["等待成交","由之后第一条有效报价成交，遵守 T+1；每轮后 30、120、300 秒补价至多 3 次，轮次失败时也为卖单补价"],
+    ["减仓成交","余仓继续持有，回到上面的判定"],
+    ["全清成交","周期结束，计入胜率与收益"],
+  ],"成交"));
+  if (exits) trade.append(exitLineTable(exits));
+
   const foot=elt("div",undefined,"backtest-rules-foot");
   for (const [label,text] of [
-    ["研判参考","主板占比、板块暴露、核心股、当日报价、规模和日均成交额供AI综合研判；规模与流动性保留资料日期、覆盖和缺失状态，不设统一数值准入线。"],
-    ["成交与等待","节点登记后，使用交易时段内、节点之后的有效新报价撮合。买入资金须足够一手及已配置费用；卖出遵守T+1，未解锁份额继续等待。"],
-    ["历史周期","已有持仓退出沿用创建时冻结的规则；当前产品规则待复核时仍按可卖份额与有效报价检查退出。实际进度见下方节点与成交记录。"],
+    ["研判参考","主板占比、板块暴露、核心股、当日报价、规模和日均成交额供 AI 综合研判；规模与流动性保留资料日期、覆盖和缺失状态，不设统一数值准入线。"],
+    ["取价口径","浮盈和峰值只用轮次采样到的报价，不用日线最高价；ATR20 取买入前 20 个交易日，缺失时各线取下限并标注。"],
+    ["历史周期",exits ? "按 v1 开仓的周期没有价格和时间退出，只有首次转弱减"+half+"、明确退潮全清；每笔实际使用的规则和各线见下方周期的退出计划。"
+      : "已有持仓退出沿用创建时冻结的规则；实际进度见下方节点与成交记录。"],
   ]) {
     const line=elt("p");line.append(elt("strong",label),document.createTextNode(text));foot.append(line);
   }
-  notice.append(columns,foot);
+  notice.append(screen,trade,foot);
   return notice;
 }
 
@@ -1151,7 +1239,7 @@ async function renderBacktests() {
     b.setAttribute("aria-pressed",String(state.mode===mode)); tabs.append(b);
   }
   const screen=$("screen");
-  screen.replaceChildren(title("回测工作台","查阅自动周期，或独立重放手动组合"),backtestRulesNotice(),tabs);
+  screen.replaceChildren(title("回测工作台","查阅自动周期，或独立重放手动组合"),backtestRulesNotice(state.view.new_cycle_rule),tabs);
   if (state.mode==="auto") {
     stopPoll();
     renderAutomaticBacktests(screen,state.view);

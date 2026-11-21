@@ -48,6 +48,29 @@ const row=(code="000001.SZ",score="80")=>({ts_code:code,name:code==="000001.SZ"?
 const info=(items=[row()])=>({items,available_dates:["2026-11-17"],selected_trade_date:"2026-11-17",family:"RIGHT",page:1,page_size:20,pages:1,total:items.length,summary:{total:items.length,valid_score_count:items.length,max_score:"80",valid_return_count:1,up_count:1,high_return_count:0},batch:{version_id:"right-v1",published_at:"2026-11-17T16:00:00+08:00"}});
 const days=["2026-11-10","2026-11-11","2026-11-12","2026-11-13","2026-11-16","2026-11-17"];
 
+test("backtest rules draw the screening and exit topology from the served rule snapshot",()=>{
+  const {context,calls}=harness(()=>{throw new Error("the rule notice must not request data");});
+  const row=(multiple,days)=>({stop_loss:[multiple,"0.011","0.022"],trail_start:["0.41","0.021","0.031"],
+    trail_drawdown:["0.36","0.013","0.023"],target_reduce:["0.71","0.026","0.036"],
+    stagnant_days:days,stagnant_return:"0.012",max_days:days+7});
+  const v2={version:"hermes_signal_cycle_v2",reduce_ratio:"0.50",regime_mode:"DUAL",time_exit_enabled:true,
+    bear_early_weak_exit:false,weak_exit_trade_days:4,breakeven_arm_return:"0.017",breakeven_buffer:"1.007",
+    regime_bull_volume_ratio:"1.13",regime_bear_volume_ratio:"0.87",
+    exit_table:{BEAR_DEFENSE:row("0.7",2),RANGE_ROTATION:row("0.8",3),BULL_OFFENSE:row("0.95",4)}};
+  const text=context.backtestRulesNotice(v2).textContent;
+  for (const part of ["新周期规则 hermes_signal_cycle_v2","筛选逻辑","交易逻辑","成员不少于 300 只","沪深300 + 中证1000",
+    "0.7 × ATR20，限 1.1%–2.2%","0.95 × ATR20，限 1.1%–2.2%","0.71 × ATR20，限 2.6%–3.6%","T+2 起浮盈低于 +1.2%","T+11",
+    "峰值浮盈到过 +1.7%","成本 × 1.007","跨交易日第 4 次转弱","量能比 ≥ 1.13","量能比 ≤ 0.87","减50%，并启用保本",
+    "到期退出","轮次失败时也为卖单补价"]) assert.ok(text.includes(part),part);
+  assert.ok(!text.includes("弱势档早衰"));
+  assert.ok(!context.backtestRulesNotice({...v2,time_exit_enabled:false}).textContent.includes("到期退出"));
+  assert.ok(context.backtestRulesNotice({...v2,bear_early_weak_exit:true,regime_mode:"SINGLE"}).textContent.includes("弱势档早衰"));
+  const v1=context.backtestRulesNotice({version:"hermes_signal_cycle_v1",reduce_ratio:"0.50"}).textContent;
+  for (const part of ["新周期规则 hermes_signal_cycle_v1","首次转弱","明确退潮","没有按价格或持有天数的退出"]) assert.ok(v1.includes(part),part);
+  for (const part of ["成本止损","移动止盈","ATR20 ×","各线取值"]) assert.ok(!v1.includes(part),part);
+  assert.equal(calls.length,0);
+});
+
 test("ETF report renders the five saved counting dimensions and their selectable tiers",()=>{
   const {context,calls,root}=harness(()=>{throw new Error("saved report must not recollect data");});
   const fixtures=[

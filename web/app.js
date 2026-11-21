@@ -24,7 +24,8 @@ const regimes = {BULL_OFFENSE:["强势进攻","bull"],RANGE_ROTATION:["震荡轮
 const exitReasons = {STOP_LOSS_HIT:"成本止损",BREAKEVEN_PROTECT:"余仓保本",TRAILING_TAKE_PROFIT:"移动止盈",
   TIME_EXIT_STAGNANT:"滞涨到期",TIME_EXIT_MAX_DAYS:"持有到期",TARGET_PROFIT_REDUCE:"目标止盈减半",AI_RETREAT:"明确退潮",
   AI_WEAK_CROSS_DAY_2:"跨日第2次转弱",BEAR_EARLY_WEAK_EXIT:"弱势档早衰",AI_FIRST_WEAK_REDUCE:"首次转弱减半"};
-const exitFlags = {ATR_UNAVAILABLE:"ATR20 缺失，各线取下限",REGIME_FALLBACK_RANGE:"大盘数据不足，按震荡档"};
+const exitFlags = {ATR_UNAVAILABLE:"ATR20 缺失，各线取下限",REGIME_FALLBACK_RANGE:"大盘数据不足，按震荡档",
+  MIGRATED_FROM_V1:"由 v1 周期迁入"};
 const roundStates = {RUNNING:"研判中",PUBLISHED:"报告已保存",FAILED:"轮次失败",MISSING:"未发布"};
 const deliveryStates = {SENT:"已接收",NOT_QUEUED:"无投递记录",PENDING:"待投递",SENDING:"投递处理中",FAILED:"投递失败"};
 const qqFormatStates = {

@@ -178,5 +178,5 @@ docker exec -i stock-v4-backend python - --since 2026-11-16 < tools/exit_observa
 
   输出三部分：`entries`（每笔建仓的规则版本、回退标记和建仓元数据，汇总 `atr_unavailable`、`regime_fallback_range`）；
   `late_round_gaps`（每笔持仓每个交易日：当日最后一条采样报价之后，收盘价是否越过止损、保本、移动止盈或目标止盈线，
-  以及次日第一条采样报价相对收盘的缺口）；`index_bars`（每个交易日的 107 指数日线是否在下一个交易日开盘前落库，
+  以及次日第一条采样报价相对收盘的缺口；汇总里 `crossed_lines` 按线计数，隔夜缺口均值只算三条清仓线）；`index_bars`（每个交易日的 107 指数日线是否在下一个交易日开盘前落库，
   分 DUAL 和 SINGLE）。日线没有落库的交易日记为 `CLOSE_NOT_STORED`，不推算。

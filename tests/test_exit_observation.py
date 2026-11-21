@@ -56,7 +56,8 @@ class ExitObservation(TestCase):
         self.assertEqual(second["next_open_sample"]["observed_at"], quotes[2]["observed_at"])
         self.assertEqual(result["summary"], dict(
             cycles_opened=1, atr_unavailable=0, regime_fallback_range=0, held_sessions=2, close_not_stored=0,
-            close_crossed_a_line=1, average_overnight_gap_after_crossing="-0.025907",
+            close_crossed_a_line=1, crossed_lines=dict(STOP_LOSS_HIT=1),
+            average_overnight_gap_after_exit_line="-0.025907",
             index_bar_sessions=2, dual_stored=1, single_stored=1))
         self.assertEqual(result["entries"][0]["entry"]["entry_round_slot"], "09:35")
         self.assertEqual([(row["trade_date"], row["DUAL"], row["SINGLE"]) for row in result["index_bars"]],
@@ -71,11 +72,31 @@ class ExitObservation(TestCase):
         self.assertEqual((row["trade_date"], row["missing"], row["crossed"]), (DAYS[0], "CLOSE_NOT_STORED", None))
         self.assertEqual({key: result["summary"][key] for key in (
             "atr_unavailable", "regime_fallback_range", "close_not_stored", "close_crossed_a_line",
-            "average_overnight_gap_after_crossing", "dual_stored")}, dict(
+            "crossed_lines", "average_overnight_gap_after_exit_line", "dual_stored")}, dict(
             atr_unavailable=1, regime_fallback_range=1, close_not_stored=1, close_crossed_a_line=0,
-            average_overnight_gap_after_crossing=None, dual_stored=0))
+            crossed_lines={}, average_overnight_gap_after_exit_line=None, dual_stored=0))
         self.assertIsNone(result["entries"][0]["entry"])
         # A session that has not closed yet is left out.
         early = report([cycle], {ETF: quotes}, {}, [], CALENDAR, date(2026, 11, 2), date(2026, 11, 5),
                        datetime(2026, 11, 2, 14, 40, tzinfo=CHINA))
         self.assertEqual((early["late_round_gaps"], early["index_bars"]), ([], []))
+
+    def test_close_above_the_target_of_an_unreduced_holding_is_a_crossing_and_a_reduced_one_is_not(self):
+        inputs = dict(market_regime="RANGE_ROTATION", flags=[], atr20="0.030")
+        quotes = [quote(0, "09:36", "1.000"), quote(1, "14:31", "1.010")]
+        cycle = self.held(quotes, inputs)
+        target = cycle["exit_plan"]["target_reduce"]
+        closes = close(1, str(1 + float(target) + 0.005))
+        result = report([cycle], {ETF: quotes}, closes, [], CALENDAR, date(2026, 11, 3), date(2026, 11, 3), NOW)
+        row, = result["late_round_gaps"]
+        self.assertEqual((row["crossed"], row["line"]), (True, "TARGET_PROFIT_REDUCE"))
+        self.assertEqual((result["summary"]["crossed_lines"], result["summary"]["average_overnight_gap_after_exit_line"]),
+                         (dict(TARGET_PROFIT_REDUCE=1), None))
+        # The same close after the target reduction was already raised that day is not a missed line.
+        above = str(1 + float(target) + 0.001)
+        quotes = [quotes[0], quote(1, "10:36", above), quote(1, "14:31", above)]
+        reduced = self.held(quotes, inputs)
+        self.assertEqual([order["action"] for order in reduced["orders"]], ["BUY", "REDUCE"])
+        row, = report([reduced], {ETF: quotes}, closes, [], CALENDAR, date(2026, 11, 3), date(2026, 11, 3),
+                      NOW)["late_round_gaps"]
+        self.assertEqual((row["crossed"], row["line"]), (False, None))

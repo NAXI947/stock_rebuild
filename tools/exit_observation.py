@@ -19,7 +19,7 @@ from modules.strategy_hermes.simulator import CHINA, PRECISION, Calendar, Rules,
 
 LATE_ROUND = time(14, 30)
 SIX = Decimal("0.000001")
-DROP_LINES = ("STOP_LOSS_HIT", "BREAKEVEN_PROTECT", "TRAILING_TAKE_PROFIT")
+PRICE_LINES = ("STOP_LOSS_HIT", "BREAKEVEN_PROTECT", "TRAILING_TAKE_PROFIT", "TARGET_PROFIT_REDUCE")
 
 
 def _decode(value):
@@ -59,7 +59,8 @@ def held_state(cycle, quotes, calendar, day):
             if at.date() == day:
                 last = quote
     book = dict(cycle["book"], fills=[fill for fill in fills if moment(fill["filled_at"]) <= end])
-    return dict(cycle, book=book, peak_price=str(peak), breakeven_armed=armed, reduced=True, orders=[]), last
+    reduced = any(order["action"] == "REDUCE" and moment(order["signal_at"]) <= end for order in cycle["orders"])
+    return dict(cycle, book=book, peak_price=str(peak), breakeven_armed=armed, reduced=reduced, orders=[]), last
 
 
 def late_gap(cycle, quotes, closes, calendar, day):
@@ -79,7 +80,7 @@ def late_gap(cycle, quotes, closes, calendar, day):
         return dict(row, missing="CLOSE_NOT_STORED")
     probe = dict(price_cny=close["close_cny"], observed_at=datetime.combine(day, time(15), CHINA).isoformat())
     hit = evaluate_exit(held, rules, probe, 0)
-    row.update(crossed=bool(hit and hit[1] in DROP_LINES), line=hit[1] if hit and hit[1] in DROP_LINES else None)
+    row.update(crossed=bool(hit and hit[1] in PRICE_LINES), line=hit[1] if hit and hit[1] in PRICE_LINES else None)
     later = [d for d in calendar.days if d > day]
     opened = next((quote for quote in quotes if later and quote["tradeable"]
                    and moment(quote["observed_at"]).date() == later[0] and calendar.legal(moment(quote["observed_at"]))), None)
@@ -122,14 +123,17 @@ def report(cycles, quotes, closes, batches, calendar, since, until, now):
     crossed = [row for row in gaps if row["crossed"]]
     bars = bar_coverage(batches, calendar, days, now)
     with localcontext(PRECISION):
-        extra = [Decimal(row["overnight_gap"]) for row in crossed if row["overnight_gap"] is not None]
+        extra = [Decimal(row["overnight_gap"]) for row in crossed
+                 if row["line"] != "TARGET_PROFIT_REDUCE" and row["overnight_gap"] is not None]
         summary = dict(
             cycles_opened=len(planned),
             atr_unavailable=sum("ATR_UNAVAILABLE" in row["flags"] for row in entries),
             regime_fallback_range=sum("REGIME_FALLBACK_RANGE" in row["flags"] for row in entries),
             held_sessions=len(gaps), close_not_stored=sum(row.get("missing") == "CLOSE_NOT_STORED" for row in gaps),
             close_crossed_a_line=len(crossed),
-            average_overnight_gap_after_crossing=str((sum(extra) / len(extra)).quantize(SIX)) if extra else None,
+            crossed_lines={line: sum(row["line"] == line for row in crossed) for line in PRICE_LINES
+                           if any(row["line"] == line for row in crossed)},
+            average_overnight_gap_after_exit_line=str((sum(extra) / len(extra)).quantize(SIX)) if extra else None,
             index_bar_sessions=len(bars), dual_stored=sum(row["DUAL"] for row in bars),
             single_stored=sum(row["SINGLE"] for row in bars))
     return dict(schema_version="stock-v4-exit-observation-v1", note="read-only; no ledger row was written",

@@ -210,6 +210,11 @@ def tick(ledger, cache, key, days, config, *, paused=lambda: False, clock=lambda
             return result | dict(status="DEFERRED_AFTER_COLLECTION")
         latest = shared_market(ledger, cache, key=key) or previous
         market = merge_quotes(ledger, day, latest, batch)
+        if market and anchor.get("sells_only"):
+            # Every other quote stays as it was, so this sample cannot fill a buy or raise a new order.
+            kept = dict(latest.body["quotes"]) if latest and latest.body["trade_date"] == day else {}
+            kept.update({code: quote for code, quote in market["quotes"].items() if code in orders})
+            market["quotes"] = kept
         fresh = SharedMarket.read(market) if market else None
         covered = sorted(set(needed) - set(missing_prices(orders, fresh, calendar, current)))
         result.update(supplier_batch=batch["batch"], covered=covered)

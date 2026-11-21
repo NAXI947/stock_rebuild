@@ -24,6 +24,10 @@ AUTHORISED = {"512800.SH": "887665adce5a7c6e27473e5d500d207ff01e776fa8c3a221737c
               "588100.SH": "fdadecf44d5c3ae652b9048a01814e2e162766205a7fd368612a9eb4610e694d"}
 
 
+def _decode(value):
+    return json.loads(value) if isinstance(value, str) else value
+
+
 def migrate(cycle, events, at):
     """The v2.0.1 body of one open v2 cycle; ``events`` are (kind, payload) in ledger order."""
     fills = cycle["book"]["fills"]
@@ -58,7 +62,7 @@ def run(ledger, codes, rules, now, apply):
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (ledger.ns,))
         else:
             conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-        found = {etf: (cid, json.loads(body)) for cid, etf, body in conn.execute(
+        found = {etf: (cid, _decode(body)) for cid, etf, body in conn.execute(
             "SELECT id,etf,body FROM cycles WHERE ns=%s AND etf=ANY(%s) AND status IN ('WAIT_BUY','OPEN','WAIT_EXIT')"
             + (" FOR UPDATE" if apply else ""), (ledger.ns, codes)).fetchall()}
         for code in codes:
@@ -74,7 +78,7 @@ def run(ledger, codes, rules, now, apply):
             if bought is None:
                 raise ValueError(f"{code}: the buy has not filled")
             # A saved report carries its whole source document; three fields of it are needed.
-            events = [(kind, json.loads(payload)) for kind, payload in conn.execute(
+            events = [(kind, _decode(payload)) for kind, payload in conn.execute(
                 """SELECT kind,CASE WHEN kind='report' THEN jsonb_build_object(
                        'id',payload->'id','at',payload->'at','sectors',payload->'sectors')
                        ELSE jsonb_build_object('id',payload->'id') END

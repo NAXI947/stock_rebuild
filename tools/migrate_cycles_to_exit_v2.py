@@ -38,6 +38,12 @@ def migrate(cycle, events, calendar, rules, inputs, at):
     result["migration"] = dict(at=at, from_rule=cycle["rule"])
     start = datetime.fromisoformat(plan["buy_fill_trade_date"]).date()
     seen, held = (bought["filled_at"], bought["revision"]), False
+    # Quotes that arrive together: the ledger applies only the newest observation of the batch.
+    newest = {}
+    for kind, event in events:
+        if kind == "quote" and event["etf"] == cycle["etf"]:
+            newest[event["at"]] = max(newest.get(event["at"], event), event,
+                                      key=lambda quote: (quote["observed_at"], quote["revision"], quote["id"]))
     with localcontext(PRECISION):
         cost = decimal(plan["cost_price"])
         for kind, event in events:
@@ -51,7 +57,7 @@ def migrate(cycle, events, calendar, rules, inputs, at):
                         result["weak_trade_days"].append(day)
                 elif row.get("state") in ("HOLD", "UP") and not row.get("duplicate_evidence"):
                     result["weak_trade_days"] = []
-            elif event["etf"] == cycle["etf"]:
+            elif event["etf"] == cycle["etf"] and newest[event["at"]] is event:
                 observed = moment(event["observed_at"])
                 mark = (event["observed_at"], event["revision"])
                 # Same acceptance as the ledger: a later observation, or a higher revision of the same one.

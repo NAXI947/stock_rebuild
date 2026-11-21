@@ -20,7 +20,7 @@ def report(day, hour, state, **row):
 
 def quote(day, hour, price, code=ETF, *, tradeable=True, revision=0):
     at = f"{DAYS[day]}T{hour}:00+08:00"
-    return dict(id=f"q{day}-{hour}-{code}-{revision}", etf=code, observed_at=at, received_at=at, price_cny=price,
+    return dict(id=f"q{day}-{hour}-{code}-{revision}", etf=code, at=at, observed_at=at, received_at=at, price_cny=price,
                 source="frozen:test", tradeable=tradeable, revision=revision)
 
 
@@ -93,6 +93,13 @@ class Migration(TestCase):
         cycle = migrate(self.actual, EVENTS, CALENDAR, V2, BEAR, "2026-11-21T10:30:00+08:00")
         apply_report(cycle, report(6, "09:35", "WEAK"))
         self.assertEqual((cycle["status"], cycle["orders"][-1]["trigger_reason"]), ("WAIT_EXIT", "AI_WEAK_CROSS_DAY_2"))
+
+    def test_of_quotes_arriving_together_only_the_newest_observation_counts(self):
+        early = dict(quote(1, "13:04", "1.090"), id="early", at=f"{DAYS[1]}T13:06:00+08:00")
+        late = dict(quote(1, "13:05", "1.020", revision=2), id="late", at=f"{DAYS[1]}T13:06:00+08:00")
+        cycle = migrate(self.actual, EVENTS[:7] + [("quote", early), ("quote", late)] + EVENTS[7:], CALENDAR, V2, BEAR,
+                        "2026-11-21T10:30:00+08:00")
+        self.assertEqual(cycle["peak_price"], "1.030")
 
     def test_missing_inputs_fall_back_and_are_flagged(self):
         cycle = migrate(self.actual, EVENTS, CALENDAR, V2, dict(atr20=None, atr_as_of=None), "2026-11-21T10:30:00+08:00")

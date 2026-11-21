@@ -215,6 +215,8 @@ def tick(ledger, cache, key, days, config, *, paused=lambda: False, clock=lambda
             kept = dict(latest.body["quotes"]) if latest and latest.body["trade_date"] == day else {}
             kept.update({code: quote for code, quote in market["quotes"].items() if code in orders})
             market["quotes"] = kept
+            # A partial sample is not the full one: a later full sample with the same source data must still publish.
+            market["snapshot_id"] = "intraday-" + fingerprint([market["snapshot_id"], "sells", sorted(orders)])[:24]
         fresh = SharedMarket.read(market) if market else None
         covered = sorted(set(needed) - set(missing_prices(orders, fresh, calendar, current)))
         result.update(supplier_batch=batch["batch"], covered=covered)

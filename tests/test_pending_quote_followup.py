@@ -128,9 +128,11 @@ class QuoteFollowup(TestCase):
         quotes = publish.call_args.args[2]["quotes"]
         self.assertEqual((quotes[CODE]["observed_at"], quotes[other]),
                          (at("14:15:03").isoformat(), {"price_cny": "10", "observed_at": at("14:05:02").isoformat()}))
-        # A published round still shares the whole sample.
+        partial = publish.call_args.args[2]["snapshot_id"]
+        # A published round still shares the whole sample, under an identity of its own.
         _, _, publish, _, _ = self.perform("14:15:04", cycles=[cycle("14:05:03")], fresh=sample("14:15:03", "11"))
         self.assertEqual(publish.call_args.args[2]["quotes"][other]["price_cny"], "11")
+        self.assertNotEqual(publish.call_args.args[2]["snapshot_id"], partial)
 
     def test_failed_round_never_prices_a_buy_and_falls_back_when_spent(self):
         waiting = dict(etf=CODE, primary_sector="bank", status="WAIT_BUY", unit=100, rule=asdict(Rules()),

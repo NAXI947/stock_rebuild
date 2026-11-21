@@ -56,7 +56,7 @@ input[type=file] { padding: 8px; max-width: 100% }
 .backtest-rules-heading h2 { font-size: 17px; line-height: 1.5 }
 .backtest-rules-intro { padding: 4px 20px 16px; color: var(--muted); font-size: 13px }
 .backtest-rule-number { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--brand-light); color: var(--brand-dark); font: 600 12px var(--mono) }
-.flow-section { padding: 0 20px 20px }
+.flow-section { padding: 0 20px 20px; container: flow / inline-size }
 .flow-section + .flow-section { padding-top: 18px; border-top: 1px solid var(--line) }
 .flow-section h3 { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 15px }
 .flow-chain { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0,1fr); grid-template-rows: auto auto; column-gap: 26px; margin: 0; padding: 0; list-style: none }
@@ -68,9 +68,11 @@ input[type=file] { padding: 8px; max-width: 100% }
 .flow-step + .flow-step .flow-node::before { content: "→"; left: -21px; top: calc(50% - 8px) }
 .flow-drop { align-self: start; margin: 0; padding-left: 10px; border-left: 2px dashed #d9c9a3; color: var(--muted); font-size: 12px; line-height: 1.6 }
 .flow-drop b { margin-right: 6px; color: var(--warm); font-weight: 650 }
-.flow-fork { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,340px),1fr)); gap: 16px; margin-top: 28px }
+.flow-fork { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,340px),1fr)); gap: 28px 16px; margin-top: 28px }
 .flow-branch { position: relative; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--control); background: var(--background) }
 .flow-branch::before { content: "↓"; top: -21px; left: calc(50% - 5px) }
+/* Below two 340px columns the branches stack; they are still evaluated side by side, not in sequence. */
+@container flow (max-width: 695px) { .flow-branch + .flow-branch::before { content: "同时"; left: 14px; top: -20px; font: 600 12px/1 var(--sans, inherit) } }
 .flow-branch h4 { margin: 0; font-size: 14px }
 .flow-branch-context { margin: 2px 0 8px; color: var(--muted); font-size: 12px }
 .flow-rules { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; counter-reset: flow-rule }

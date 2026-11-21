@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest import TestCase, skipUnless
 from unittest.mock import Mock, patch
 
-from modules.strategy_hermes.signal_cycle import apply_report, create_cycle, fill
+from modules.strategy_hermes.signal_cycle import apply_report, create_cycle, fill, process_quote
 from modules.strategy_hermes.simulator import Calendar, Rules, buy, moment, new_book
 from modules.strategy_hermes.stage2.inputs import SharedMarket
 from modules.strategy_hermes.stage2 import pending_quotes as followup
@@ -158,7 +158,15 @@ class QuoteFollowup(TestCase):
     def test_last_round_spreads_its_three_calls_to_1450_while_a_sell_waits(self):
         keys = followup.run_keys(self.ledger.ns, DAY, "14:30")
         late = dict(slot="14:30", at=at("14:33:00").isoformat(), report_id="report-1430", keys=keys)
-        sell, stale = [cycle("14:33:00")], market("14:30:09")
+        entry = dict(id="entry", at=at("09:35:00", "2026-11-16").isoformat(), sectors={"bank": {"state": "UP"}})
+        held = create_cycle(CODE, 100, Rules.v2_1("DUAL"), entry, dict(sector_id="bank"), [])
+        bought_at = at("09:36:00", "2026-11-16").isoformat()
+        process_quote(held, dict(id="entry-quote", etf=CODE, observed_at=bought_at, received_at=bought_at,
+                                 price_cny="0.899", source="tickflow", tradeable=True, revision=0), CALENDAR)
+        apply_report(held, dict(id=late["report_id"], at=late["at"], sectors={"bank": {"state": "EXIT"}}))
+        sell, stale = [held], market("14:30:09")
+        self.assertEqual((held["status"], held["orders"][-1]["action"], held["orders"][-1]["trigger_reason"]),
+                         ("WAIT_EXIT", "EXIT", "AI_RETREAT"))
         self.old = stale
         used = []
         for now, key in (("14:33:59", None), ("14:34:00", keys[0]), ("14:37:59", None), ("14:38:00", keys[1]),
@@ -178,6 +186,7 @@ class QuoteFollowup(TestCase):
         fill(filled, dict(id="q-1450", etf=CODE, observed_at=at("14:49:58").isoformat(), received_at=at("14:50:01").isoformat(),
                           price_cny="0.913", source="tickflow", tradeable=True, revision=0), CALENDAR)
         self.assertEqual(filled["orders"][-1]["status"], "FILLED")
+        self.assertEqual(filled["status"], "CLOSED")
 
     def test_last_round_schedule_holds_for_failed_rounds_late_restarts_and_nothing_else(self):
         keys = followup.run_keys(self.ledger.ns, DAY, "14:30")

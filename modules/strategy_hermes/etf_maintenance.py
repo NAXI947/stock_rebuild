@@ -15,6 +15,7 @@ from .ledger import encode, fingerprint
 from .simulator import CHINA
 from .left_right_backfill import BackfillQueue, Interrupted, QueueFull, LOCK, CAPACITY
 from .stage2.maintenance_store import live_mapping, publish_mapping
+from .stage2.penetration import missing_strategy_weights
 from .stage2.reference_runtime import runtime_calendar, calendar_status
 from .qq_message_fields import maintenance_fields, verification_lines
 from .qq_templates import MESSAGE_FORMAT
@@ -483,7 +484,8 @@ def execute_job(executor,claim):
                 publish_mapping(queue.ledger,updated,summary,connection=conn,expected_parent=mapping['version'])
         mapping=updated
         result['mapping']=dict(version=mapping['version'],sectors=len(mapping['sectors']),
-                               products=len(mapping['products']),weights=len(mapping['weights']))
+                               products=len(mapping['products']),weights=len(mapping['weights']),
+                               missing_strategy_weights=missing_strategy_weights(mapping, datetime.now(CHINA)))
         result['items'].append(dict(dataset='mapping',label='板块与ETF资料',status=summary.get('status','PARTIAL'),
                                     message=summary.get('message') or summary.get('status','已检查')))
         if not static:

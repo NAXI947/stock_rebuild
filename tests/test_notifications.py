@@ -183,9 +183,9 @@ class QQReport(TestCase):
         self.assertEqual(candidates, [])
         self.assertEqual(observations, ['银行 '+ETF+'（仅静态匹配）'])
         self.assertEqual(gaps, [])
-        self.assertEqual(_etf_gaps(entry, [SID], {SID:'银行'}), ['目录1351只ETF缺成分权重，穿透待核验'])
+        self.assertEqual(_etf_gaps(entry, [SID], {SID:'银行'}), [])
         self.assertEqual(json.dumps(entry, sort_keys=True), original)
-        # A report that carries the strategy-scope count pushes only that; the catalog count stays on the workbench.
+        # A catalog count is not a strategy-scope warning, even on older saved reports.
         group = entry['input_meta']['etf_recommendations']['sectors'][SID]
         group['coverage_gaps'] = dict(weights=dict(reason='WEIGHTS_UNVERIFIED', products=1351, scope_products=0, indexes=373))
         self.assertEqual(_etf_gaps(entry, [SID], {SID:'银行'}), [])

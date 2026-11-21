@@ -375,6 +375,15 @@ def _dated_weights(raw, at):
     return weights(raw, at.date())
 
 
+def missing_strategy_weights(mapping, at):
+    bases = mapping["weights"]
+    usable = {index for index, basis in bases.items() if _dated_weights(basis, at)}
+    return sum(isinstance(product, dict) and CODE.fullmatch(code) is not None
+               and (product.get("rule") or {}).get("scope") == STRATEGY_SCOPE
+               and product.get("index_code") not in usable
+               for code, product in mapping["products"].items())
+
+
 def _recommend_sector(mapping, sid, market, at, core, core_status, events, *, quote_cache=None,
                       direction_policy=False, weight_cache=None):
     from .momentum import aggregate, check, evaluate as momentum, history_ready, history_count, valid_quote

@@ -137,6 +137,12 @@ class StageTwo(unittest.TestCase):
         cycle, = self.store.inspect()["cycles"]
         self.assertEqual(cycle["status"], "OPEN")
         self.assertEqual([order["action"] for order in cycle["orders"]], ["BUY"])
+        from datetime import date
+        from tools.exit_observation import load, skill_effect
+        day = date.fromisoformat(D1)
+        *_, rounds = load(self.store, day)
+        week, = skill_effect(rounds, day, day)
+        self.assertEqual((week["reports"], week["up_with_etf_choices_ratio"]), (len(SLOTS), "1.000000"))
 
     @unittest.skipUnless(os.environ.get("OCTOP_DECISION_ACCEPTANCE_FILE"), "set archived OCTOP acceptance path")
     def test_archived_octop_decisions_drive_frozen_cycle(self):

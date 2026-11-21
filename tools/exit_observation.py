@@ -212,7 +212,8 @@ def load(ledger, since):
                            (SELECT jsonb_object_agg(key,jsonb_build_object('state',value->'state','phase',value->'phase',
                                'duplicate_evidence',value->'duplicate_evidence')) FROM jsonb_each(payload->'sectors')),
                            (SELECT jsonb_object_agg(key,jsonb_array_length(value))
-                              FROM jsonb_each(payload->'input_meta'->'octop'->'etf_choices')
+                              FROM jsonb_each(CASE WHEN jsonb_typeof(payload#>'{input_meta,octop,etf_choices}')='object'
+                                                   THEN payload#>'{input_meta,octop,etf_choices}' END)
                              WHERE jsonb_typeof(value)='array')
                          FROM events WHERE ns=%s AND kind='report' AND at>=%s
                            AND jsonb_typeof(payload->'sectors')='object' ORDER BY at,id""",

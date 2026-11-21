@@ -251,6 +251,9 @@ class NativeMCP(unittest.TestCase):
             status, body = self.request(dict(jsonrpc="2.0", id=21, method="tools/call",
                 params={"name": "stock_hermes_status", "arguments": {"run_id": "round"}}))
         self.assertEqual((status, json.loads(body["result"]["content"][0]["text"])), (200, dict(state="SUBMITTED", run_id="round")))
+        # No retry is started inside the last six seconds of the fifty; the fake clock advances one second per reading.
+        self.assertLess(self.queue.status.call_count, 50)
+        self.assertLessEqual(next(clock), 50)
 
     def test_an_unavailable_service_and_other_database_errors_still_answer_503(self):
         stop, clock = Mock(), iter(range(1000))

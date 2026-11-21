@@ -23,6 +23,8 @@ VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 TERMINAL = {"READY", "PUBLISHED", "FAILED", "SKIPPED", "PAUSED", "NOT_DUE", "NOT_TRADING_DAY"}
 # Errors that can pass on their own: a dropped or refused connection, a lock or statement timeout.
 TRANSIENT = (OSError, psycopg.OperationalError)
+# A retried query can itself wait out a five-second lock timeout; none is started this close to the limit.
+RETRY_MARGIN = 6
 
 
 def scope_list(value,field):
@@ -110,7 +112,7 @@ def application(queue, token, *, stop=None, wait_seconds=50, maintenance=None):
                 result = call()
                 break
             except TRANSIENT as exc:
-                if monotonic() >= deadline or stop.wait(.5):
+                if monotonic() >= deadline - RETRY_MARGIN or stop.wait(.5):
                     raise
                 logging.getLogger(__name__).warning('native MCP call retried after %s', type(exc).__name__)
         while result.get("run_id") and monotonic() < deadline:
@@ -128,6 +130,8 @@ def application(queue, token, *, stop=None, wait_seconds=50, maintenance=None):
             except TRANSIENT as exc:
                 # Keep the last saved state; the next poll, or the agent's own status call, reads it again.
                 logging.getLogger(__name__).warning('native MCP status poll failed: %s', type(exc).__name__)
+                if monotonic() >= deadline - RETRY_MARGIN:
+                    break
         return result
 
     def invoke_tool(name,args):

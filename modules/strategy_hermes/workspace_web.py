@@ -70,6 +70,37 @@ def _background(market):
                 leaders=[item[1] for item in leaders[:8]])
 
 
+def _sector_names(row, source):
+    """Map the sector ids of one stored report to the names its raw rows carry."""
+    named, names = source.get("sectors"), {}
+    for sid, sector in row.get("sectors", {}).items():
+        index = sector.get("row")
+        raw = named[index] if isinstance(named, list) and type(index) is int and 0 <= index < len(named) else None
+        names[sid] = raw.get("sector_name") if isinstance(raw, dict) else None
+    return names
+
+
+def _named_rotation(conn, ns, rotation, loaded):
+    """Add each active direction's name, from the report window or the report that last moved it."""
+    names = {}
+
+    def learn(row, source):
+        for sid, name in _sector_names(row, source).items():
+            names[sid] = names.get(sid) or name
+
+    for _, row, source in loaded:
+        learn(row, source)
+    wanted = sorted({state["report_id"] for sid, state in rotation.items()
+                     if not names.get(sid) and state.get("report_id")})
+    if wanted:
+        for (raw,) in conn.execute(
+            "SELECT payload FROM events WHERE ns=%s AND kind='report' AND id=ANY(%s)", (ns, wanted),
+        ).fetchall():
+            row = json.loads(raw)
+            learn(row, json.loads(row["raw"]))
+    return {sid: dict(state, name=names.get(sid)) for sid, state in rotation.items()}
+
+
 def _round_sectors(loaded, rotation):
     """Follow each sector of the latest report day through that day's rounds.
 
@@ -91,11 +122,8 @@ def _round_sectors(loaded, rotation):
     for entry, row, source in loaded:
         if entry["at"][:10] != day:
             continue
-        named = source.get("sectors")
-        for sid, sector in row.get("sectors", {}).items():
-            index = sector.get("row")
-            raw = named[index] if isinstance(named, list) and type(index) is int and 0 <= index < len(named) else None
-            sectors.setdefault(sid, dict(id=sid, name=raw.get("sector_name") if isinstance(raw, dict) else None, rounds={}))
+        for sid, name in _sector_names(row, source).items():
+            sectors.setdefault(sid, dict(id=sid, name=name, rounds={}))
     for _, row, _ in reversed(loaded):
         for sid, sector in row.get("sectors", {}).items():
             if sid in states:
@@ -153,18 +181,19 @@ def _overview(ledger, fallback, calendar):
             """SELECT id,at,payload FROM events WHERE ns=%s AND kind='report'
                ORDER BY at DESC,id DESC LIMIT 8""", (ledger.ns,),
         ).fetchall()
-    reports,window,loaded = [],[],[]
-    for rid,at,raw in rows:
-        row = json.loads(raw)
-        source = json.loads(row["raw"])
-        if not reports:
-            window = row.get("input_meta",{}).get("rotation_window",[])
-        reports.append(dict(id=rid,at=at,status=row["status"],summary=source.get("summary"),
-                            data_as_of=row.get("data_as_of"),slot=row.get("round_slot")))
-        loaded.append((reports[-1],row,source))
+        reports,window,loaded = [],[],[]
+        for rid,at,raw in rows:
+            row = json.loads(raw)
+            source = json.loads(row["raw"])
+            if not reports:
+                window = row.get("input_meta",{}).get("rotation_window",[])
+            reports.append(dict(id=rid,at=at,status=row["status"],summary=source.get("summary"),
+                                data_as_of=row.get("data_as_of"),slot=row.get("round_slot")))
+            loaded.append((reports[-1],row,source))
+        rotation = _named_rotation(conn,ledger.ns,view.get("rotation",{}),loaded)
     return dict(environment=ledger.settings.env,input_kind=ledger.origin,slots=SLOTS,
-                reports=reports,round_sectors=_round_sectors(loaded,view.get("rotation",{})),
-                rotation_window=window,rotation=view.get("rotation",{}),cycles=view.get("cycles",[]),
+                reports=reports,round_sectors=_round_sectors(loaded,rotation),
+                rotation_window=window,rotation=rotation,cycles=view.get("cycles",[]),
                 evaluation=view.get("evaluation",{}), evaluation_recent=view.get("evaluation_recent"),
                 new_cycle_rule=ledger._rules().snapshot(),
                 market=_background(read_market(ledger,fallback)))

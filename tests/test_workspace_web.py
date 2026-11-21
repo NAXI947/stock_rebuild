@@ -127,6 +127,7 @@ class WorkspaceWebTest(unittest.TestCase):
         self.assertIsNone(json.loads(raw)["market"])
         self.assertEqual(json.loads(raw)["reports"],[])
         self.assertEqual(json.loads(raw)["round_sectors"],[])
+        self.assertEqual(json.loads(raw)["rotation"],{})
 
     def test_secondary_views_are_authenticated_and_have_no_synthetic_data(self):
         self.assertEqual(self.request("GET", API + "/status", auth=False)[0], 401)
@@ -159,6 +160,22 @@ class WorkspaceWebTest(unittest.TestCase):
             self.assertEqual(result["items" if route == "left-right-info" else "days"], [])
         self.assertEqual(self.request("GET", API + "/left-right-info?page_size=101")[0], 400)
         self.assertEqual(self.request("GET", API + "/hot-sectors-info?limit=101")[0], 400)
+
+    def test_active_direction_names_are_read_from_the_report_that_last_moved_them(self):
+        from modules.strategy_hermes.workspace_web import _named_rotation
+        known, lost = "kaipanla:801001", "kaipanla:801002"
+        payload = dict(status="PARTIAL", sectors={known: dict(row=0, phase="NEW")},
+                       raw=json.dumps(dict(sectors=[dict(sector_name="芯片")])))
+        rotation = {known: dict(phase="NEW", streak=0, report_id="older"),
+                    lost: dict(phase="NEW", streak=0, report_id="gone")}
+        with self.ledger._connect() as conn:
+            conn.execute("INSERT INTO runs(ns,config,origin) VALUES (%s,'{}','FROZEN')", (self.ns,))
+            conn.execute(
+                "INSERT INTO events(ns,kind,id,at,fingerprint,payload) VALUES (%s,'report','older',%s,'hash',%s)",
+                (self.ns, "2026-11-10T14:05:31+08:00", encode(payload)),
+            )
+            named = _named_rotation(conn, self.ns, rotation, [])
+        self.assertEqual(named, {known: dict(rotation[known], name="芯片"), lost: dict(rotation[lost], name=None)})
 
     def test_report_detail_reads_only_its_saved_qq_body_and_delivery(self):
         at = "2026-11-10T14:05:31+08:00"
@@ -484,6 +501,33 @@ class RoundSectorsTest(unittest.TestCase):
             ("UNKNOWN", True, "NEW", True), (None, True, "NEW", False), (None, True, "NEW", False), (None, True, "NEW", False)])
         self.assertEqual(rounds["板块1"]["09:35"]["change"], "0.00")
         self.assertEqual(rounds["板块1"]["09:35"]["reasons"], ["板块涨跌 0.00%"])
+
+    def test_active_directions_take_their_name_from_the_window_or_their_last_report(self):
+        from modules.strategy_hermes.workspace_web import _named_rotation
+        a, b, c = (f"kaipanla:80100{n}" for n in range(1, 4))
+        self.publish("2026-11-18", "14:30", {a: ("NEW", "e0"), b: ("NEW", "e0")})
+        self.publish("2026-11-19", "09:35", {a: ("WEAKEN", "e1")})
+        stored = {entry["id"]: json.dumps(dict(row, raw=json.dumps(source))) for entry, row, source in self.loaded}
+        asked = []
+
+        class Reports:
+            def execute(self, sql, args):
+                asked.append(args)
+                return self
+
+            def fetchall(self):
+                return [(stored[rid],) for rid in asked[-1][1]]
+
+        rotation = {sid: dict(phase=state["phase"], streak=state["streak"], report_id=state["report_id"])
+                    for sid, state in self.chain.items()}
+        rotation[c] = dict(phase="MAINTAIN", streak=1, report_id=None)
+        named = _named_rotation(Reports(), "ns", rotation, self.loaded[:1])
+        self.assertEqual({sid: row["name"] for sid, row in named.items()}, {a: "板块1", b: "板块2", c: None})
+        self.assertEqual(asked, [("ns", ["report-2026-11-18-14:30"])])
+        self.assertEqual(named[a], dict(rotation[a], name="板块1"))
+        asked.clear()
+        self.assertEqual(_named_rotation(Reports(), "ns", {a: rotation[a]}, self.loaded[:1])[a]["name"], "板块1")
+        self.assertEqual(asked, [])
 
     def test_no_reports_and_missing_optional_fields_yield_an_empty_or_partial_matrix(self):
         from modules.strategy_hermes.workspace_web import _round_sectors

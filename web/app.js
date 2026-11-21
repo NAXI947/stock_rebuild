@@ -242,6 +242,29 @@ function roundChip(name, slot, cell) {
     box.append(elt("span",(change>0 ? "+" : "")+(change*100).toFixed(2)+"%","rm-change numeric "+(change>0 ? "up" : change<0 ? "down" : "")));
   return box;
 }
+// The active directions, one line per phase with the longest streak first.
+function rotationGroups(rotation) {
+  const rows=Object.entries(rotation || {}).map(([id,row])=>({id,...row}));
+  if (!rows.length) return empty("当前暂无已确认的活动方向");
+  const order=["STRENGTHEN","NEW","MAINTAIN","WEAKEN"], list=elt("dl",undefined,"dir-groups");
+  for (const phase of [...order,...new Set(rows.map(row=>row.phase).filter(phase=>!order.includes(phase)))]) {
+    const members=rows.filter(row=>row.phase===phase).sort((a,b)=>(b.streak||0)-(a.streak||0)),
+          [sign,word]=roundMarks[phase] || ["",statusName(phase)],
+          kind=order.includes(phase) ? phase.toLowerCase() : "held",
+          head=elt("dt",undefined,"rm-chip rm-"+kind), body=elt("dd");
+    if (sign) head.append(elt("span",sign,"rm-sign"));
+    head.append(elt("span",word),elt("span",members.length,"rm-count numeric"));
+    for (const row of members) {
+      const item=elt("span",undefined,"dir-item dir-"+kind+(row.streak>1 ? " dir-run" : ""));
+      item.append(elt("span",row.name || row.id,"dir-name"),elt("span",row.label || word,"dir-state"));
+      item.title=[row.name ? row.id : "未取得板块名称",row.report_id ? "最近一次变动的报告 "+row.report_id : ""].filter(Boolean).join("\n");
+      body.append(item);
+    }
+    if (!members.length) body.append(elt("span","无","muted"));
+    list.append(head,body);
+  }
+  return list;
+}
 // Rows are sectors, columns the five rounds; sectors that were never active today stay folded away.
 function roundMatrix(view, day, openReport, repaint) {
   const slots=view.slots || [], order=["STRENGTHEN","NEW","MAINTAIN","WEAKEN"];
@@ -340,7 +363,7 @@ function renderOverview() {
   paintRounds();
   panes.append(rounds,selected);
   const chain=card("活动轮动方向");
-  chain.append(table(["板块标识","状态","报告"],Object.entries(view.rotation).map(([id,row])=>[id,tag(row.label||statusName(row.phase)),row.report_id]),"当前暂无已确认的活动方向"));
+  chain.append(rotationGroups(view.rotation));
   const timeline=card("1.5 日轮动轨迹");
   timeline.append(table(["交易日","轮次","状态","报告"],view.rotation_window.map(r=>[
     r.trade_date,r.slot,roundStates[r.status] || statusName(r.status),r.report_id

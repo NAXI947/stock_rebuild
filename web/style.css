@@ -159,6 +159,20 @@ progress { width: 100%; height: 12px; accent-color: var(--brand) }
 .rm-carried { border-style: dashed; border-color: currentColor; background: transparent }
 .rm-idle, .rm-wait { color: #7b8a94; font-weight: 400 }
 .rm-idle-row th:first-child { color: #7b8a94; font-weight: 400 }
+.dir-groups { display: grid; grid-template-columns: max-content 1fr; align-items: start; gap: 10px 12px; margin: 0 }
+.dir-groups dt { justify-self: start; margin-top: 2px }
+.dir-groups dd { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; margin: 0 }
+.dir-item { display: inline-flex; align-items: baseline; gap: 6px; min-height: 28px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; line-height: 1.5 }
+.dir-name { color: var(--ink); font-weight: 600; overflow-wrap: anywhere }
+.dir-state { font-size: 12px; font-weight: 600; white-space: nowrap }
+.dir-strengthen .dir-state { color: var(--up) }
+.dir-new .dir-state { color: #a34a05 }
+.dir-maintain .dir-state { color: #3d5566 }
+.dir-weaken .dir-state { color: var(--down) }
+.dir-held .dir-state { color: var(--muted) }
+.dir-strengthen.dir-run { border-color: #f1bdb7; background: #fdecea }
+.dir-maintain.dir-run { border-color: #cbd7e0; background: #edf2f6 }
+.dir-weaken.dir-run { border-color: #b3dbc5; background: #e6f4ec }
 @container rounds (max-width: 560px) {
   .round-matrix { min-width: 0 }
   .round-matrix th, .round-matrix td { padding-inline: 1px }

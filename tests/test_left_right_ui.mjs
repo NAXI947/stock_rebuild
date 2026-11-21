@@ -278,6 +278,26 @@ test("five-round card lays sectors against rounds with entry, streaks, exit and 
   assert.equal(css(card(),"slot").length,0);
 });
 
+test("active directions are grouped by phase with sector names and the longest streak first",()=>{
+  const member=(phase,streak,label,name)=>({phase,streak,label,name,member:true,report_id:"report-"+phase+streak});
+  const {root}=openOverview(overview({rotation:{
+    "kaipanla:11":member("WEAKEN",1,"减弱","甲"),"kaipanla:12":member("WEAKEN",5,"减弱×5","乙"),
+    "kaipanla:13":member("MAINTAIN",2,"维持×2","丙"),"kaipanla:14":member("NEW",0,"新增","丁"),
+    "kaipanla:15":member("WEAKEN",3,"减弱×3",null)}}));
+  const groups=css(root,"dir-groups")[0].children, lines={};
+  for (let i=0;i<groups.length;i+=2) lines[groups[i].textContent]=groups[i+1].children.map(item=>item.textContent);
+  assert.deepEqual(lines,{"▲加强0":["无"],"＋新增1":["丁新增"],"—维持1":["丙维持×2"],"▼减弱3":["乙减弱×5","kaipanla:15减弱×3","甲减弱"]});
+  assert.deepEqual(groups.filter((_,i)=>i%2===0).map(head=>head.className),
+    ["rm-chip rm-strengthen","rm-chip rm-new","rm-chip rm-maintain","rm-chip rm-weaken"]);
+  const [named,unnamed]=groups[7].children;
+  assert.equal(named.className,"dir-item dir-weaken dir-run");
+  assert.equal(groups[7].children[2].className,"dir-item dir-weaken");
+  assert.equal(named.title,"kaipanla:12\n最近一次变动的报告 report-WEAKEN5");
+  assert.match(unnamed.title,/^未取得板块名称/);
+  assert.equal(css(openOverview(overview()).root,"dir-groups").length,0);
+  assert.ok(openOverview(overview()).root.textContent.includes("当前暂无已确认的活动方向"));
+});
+
 test("five-round card unfolds idle sectors, falls back to the source text and still opens a report",async()=>{
   const {card,grid,heads,calls,root}=openOverview(overview());
   const idle=button(card(),"非活动板块 1");

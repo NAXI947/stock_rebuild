@@ -376,8 +376,10 @@ def _current(report_id, report_at, report, links, names, mapped):
         if not found:
             empty.append(dict(id=sid, name=names.get(sid), in_mapping=sid in mapped,
                               reason=_text(group.get("reason")) if isinstance(group, dict) else None))
+    # An explicit relation counts as penetrating even without a constituent match, so the three parts add up to the total.
     entry = {code for _, code in links}
-    rejected = evaluated - usable - entry
+    matched |= entry
+    rejected = matched - usable - entry
     return dict(report_id=report_id, report_at=report_at, sectors=len(groups), evaluated=len(evaluated),
                 matched=len(matched), entry=len(entry), observe=len(matched - entry - rejected), rejected=len(rejected),
                 reasons=[dict(reason=reason, etfs=len(codes & rejected)) for reason, codes in

@@ -315,6 +315,16 @@ class SectorEtfPenetrationTest(TestCase):
         info.read_penetration(self.store, self.NOW)
         self.assertEqual(self.store.bodies, [["maintained-new", "maintained-old"]])
 
+    def test_explicit_relations_without_a_constituent_match_stay_inside_the_total(self):
+        saved = report()
+        saved["input_meta"]["penetration"]["sectors"][CLOUD]["products"] = [
+            {"etf": "158001.SZ", "matched": [], "rejection_reasons": [], "representativeness": {"entry_allowed": True}},
+            {"etf": "158003.SZ", "matched": [], "rejection_reasons": ["USABLE_PRICE_UNAVAILABLE"]}]
+        self.store.latest = ("saved-report-old", REPORT_AT, json.dumps(saved))
+        current = info.read_penetration(self.store, self.NOW)["current"]
+        self.assertEqual([current[key] for key in ("evaluated", "matched", "entry", "observe", "rejected")], [4, 3, 2, 0, 1])
+        self.assertEqual(current["reasons"], [dict(reason="PRODUCT_RULE_UNVERIFIED", etfs=1)])
+
     def test_no_mapping_no_report_and_invalid_versions_stay_empty(self):
         self.store.versions[1] = ("maintained-new", "2026-11-20T14:18:00+08:00", {}, {"sectors": []})
         self.store.latest = None

@@ -26,7 +26,7 @@ def close(day, price):
 class ExitObservation(TestCase):
     def held(self, quotes, inputs):
         entry = dict(id="entry", at=f"{DAYS[0]}T09:35:00+08:00", sectors={SECTOR: dict(state="UP")})
-        cycle = create_cycle(ETF, 100, Rules.v2_0_1("DUAL"), entry, dict(sector_id=SECTOR), [])
+        cycle = create_cycle(ETF, 100, Rules.v2_1("DUAL"), entry, dict(sector_id=SECTOR), [])
         for item in quotes:
             process_quote(cycle, item, CALENDAR, lambda at, rules: inputs)
         return cycle

@@ -160,7 +160,7 @@ def _apply_report_exits(cycle, rules, report, decision):
     if decision in ("HOLD", "UP"):
         # A report that only repeats earlier evidence is shown as HOLD but is not a new judgement.
         if (not report["sectors"][cycle["primary_sector"]].get("duplicate_evidence")
-                and not (decision == "HOLD" and rules.hold_keeps_weak_days)):
+                and (decision == "UP" or rules.hold_clears_weak_days)):
             cycle["weak_trade_days"] = []
     elif decision == "EXIT":
         _exit(cycle, "AI_RETREAT", report=report)

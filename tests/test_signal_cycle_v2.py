@@ -256,8 +256,8 @@ class ReportExits(TestCase):
         self.assertEqual(repeated["weak_trade_days"], [DAYS[1]])
         self.assertEqual(trail(feed(repeated, (2, "09:35", "WEAK")))[-1], ("EXIT", "PENDING", "AI_WEAK_CROSS_DAY_2"))
 
-    def test_v2_0_1_hold_keeps_the_weak_days_and_only_up_clears_them(self):
-        rules = Rules.v2_0_1("DUAL")
+    def test_v2_1_hold_keeps_the_weak_days_and_only_up_clears_them(self):
+        rules = Rules.v2_1("DUAL")
         held = feed(opened(RANGE, "0.025", rules=rules), (1, "10:35", "WEAK"), (2, "10:35", "HOLD"))
         self.assertEqual((held["status"], held["weak_trade_days"]), ("OPEN", [DAYS[1]]))
         feed(held, (3, "09:35", "WEAK"))
@@ -330,16 +330,22 @@ class Versions(TestCase):
         with self.assertRaises(ValueError):
             Rules(time_exit_enabled=True)
 
-    def test_v2_0_1_is_v2_with_the_hold_rule_and_v2_keeps_its_stored_snapshot(self):
-        old, new = Rules.v2("DUAL").snapshot(), Rules.v2_0_1("DUAL").snapshot()
-        self.assertNotIn("hold_keeps_weak_days", old)
-        self.assertEqual(new, old | dict(version="hermes_signal_cycle_v2_0_1", hold_keeps_weak_days=True))
-        self.assertEqual(Rules(**json.loads(encode(new))), Rules.v2_0_1("DUAL"))
-        for values in (dict(hold_keeps_weak_days=True), dict(version="hermes_signal_cycle_v2_0_1", hold_keeps_weak_days=1)):
+    def test_v2_1_is_v2_with_the_hold_rule_and_v2_keeps_its_stored_snapshot(self):
+        old, new = Rules.v2("DUAL").snapshot(), Rules.v2_1("DUAL").snapshot()
+        self.assertNotIn("hold_clears_weak_days", old)
+        self.assertEqual(new, old | dict(version="hermes_signal_cycle_v2_1", hold_clears_weak_days=False))
+        self.assertEqual(Rules(**json.loads(encode(new))), Rules.v2_1("DUAL"))
+        # A stored v2 snapshot has no such key and reads back as the rule that still clears on HOLD.
+        stored = Rules(**json.loads(encode(old)))
+        self.assertEqual((stored, stored.hold_clears_weak_days), (Rules.v2("DUAL"), True))
+        kept = feed(opened(RANGE, "0.025", rules=stored), (1, "10:35", "WEAK"), (2, "10:35", "HOLD"))
+        self.assertEqual(kept["weak_trade_days"], [])
+        for values in (dict(hold_clears_weak_days=False), dict(version="hermes_signal_cycle_v2_1"),
+                       dict(version="hermes_signal_cycle_v2_1", hold_clears_weak_days=0)):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 Rules.v2("DUAL", **values)
         with self.assertRaises(ValueError):
-            Rules(hold_keeps_weak_days=True)
+            Rules(hold_clears_weak_days=False)
 
     def test_t20_rule_switch_accepts_only_known_versions(self):
         from modules.strategy_hermes.stage2.settings import Settings
@@ -352,11 +358,11 @@ class Versions(TestCase):
         for name in ("v2", "hermes_signal_cycle_v2"):
             chosen = Settings.from_values(base | dict(MODEL_EVALUATION_RULE=name, REGIME_MODE="SINGLE")).rules()
             self.assertEqual(chosen, Rules.v2("SINGLE"))
-        for name in ("v2.0.1", "hermes_signal_cycle_v2_0_1"):
+        for name in ("v2.1", "hermes_signal_cycle_v2_1"):
             chosen = Settings.from_values(base | dict(MODEL_EVALUATION_RULE=name, REGIME_MODE="DUAL")).rules()
-            self.assertEqual(chosen, Rules.v2_0_1("DUAL"))
+            self.assertEqual(chosen, Rules.v2_1("DUAL"))
         for values in (dict(MODEL_EVALUATION_RULE="hermes_signal_cycle_v3"), dict(MODEL_EVALUATION_RULE="v2"),
-                       dict(MODEL_EVALUATION_RULE="v2.0.1"), dict(MODEL_EVALUATION_RULE="v2.1", REGIME_MODE="DUAL"),
+                       dict(MODEL_EVALUATION_RULE="v2.1"), dict(MODEL_EVALUATION_RULE="v2.0.1", REGIME_MODE="DUAL"),
                        dict(MODEL_EVALUATION_RULE="v2", REGIME_MODE="AUTO"), dict(REGIME_MODE="dual")):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 Settings.from_values(base | values)
@@ -434,7 +440,7 @@ class PostgresVersions(TestCase):
         import test_stage1 as stage1
         plan = dict(market_regime=BEAR, flags=[], regime_as_of=stage1.D1, atr20="0.055", atr_as_of=stage1.D1)
         self.store._exit_inputs = lambda db, code, at, calendar, rules: plan
-        rules = Rules.v2_0_1("DUAL")
+        rules = Rules.v2_1("DUAL")
         events = [stage1.report("r1", stage1.D1, "09:35", [(stage1.A, "减弱")]),
                   stage1.report("r2", stage1.D1, "10:35", [(stage1.A, "新增")]),
                   stage1.report("entry", stage1.D1, "13:05", [(stage1.A, "加强")], [(stage1.ETF, stage1.A, 1)])]

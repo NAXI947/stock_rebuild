@@ -21,7 +21,7 @@ class Settings:
         from ..simulator import Rules
         if self.evaluation_rule == "hermes_signal_cycle_v1":
             return Rules()
-        build = Rules.v2 if self.evaluation_rule == "hermes_signal_cycle_v2" else Rules.v2_0_1
+        build = Rules.v2 if self.evaluation_rule == "hermes_signal_cycle_v2" else Rules.v2_1
         return build(self.regime_mode)
 
     @classmethod
@@ -68,7 +68,7 @@ class Settings:
         if env == "production" and (len(namespace) > 120
                 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", namespace.removeprefix(prefix))):
             raise ValueError("invalid production namespace")
-        names = {"v1": "hermes_signal_cycle_v1", "v2": "hermes_signal_cycle_v2", "v2.0.1": "hermes_signal_cycle_v2_0_1"}
+        names = {"v1": "hermes_signal_cycle_v1", "v2": "hermes_signal_cycle_v2", "v2.1": "hermes_signal_cycle_v2_1"}
         rule = values.get("MODEL_EVALUATION_RULE") or "v1"
         rule = names.get(rule, rule)
         if rule not in names.values():

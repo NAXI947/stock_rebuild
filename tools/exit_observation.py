@@ -1,4 +1,5 @@
-"""Read-only study figures for the exit rules: entry facts, the gap after the 14:30 round, fallback and bar coverage.
+"""Read-only study figures for the exit rules: entry facts, the gap after the 14:30 round, fallback and bar coverage,
+and per week how often an UP judgement came with ETF choices and how often a judgement was downgraded to UNKNOWN.
 
 Nothing is collected and nothing is written. Every figure is rebuilt from what the ledger already saved: cycles,
 round quotes, the ETF daily batches and the 107 index bars. A fact that was not saved is reported as missing.
@@ -8,13 +9,14 @@ round quotes, the ETF daily batches and the 107 index bars. A fact that was not 
 """
 import argparse
 from dataclasses import replace
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from decimal import Decimal, localcontext
 import json
 import os
 import sys
 
 from modules.strategy_hermes.signal_cycle import evaluate_exit
+from modules.strategy_hermes.stage2.market_regime import FALLBACK
 from modules.strategy_hermes.simulator import CHINA, PRECISION, Calendar, Rules, moment
 
 LATE_ROUND = time(14, 30)
@@ -110,12 +112,41 @@ def bar_coverage(batches, calendar, days, now):
     return rows
 
 
-def report(cycles, quotes, closes, batches, calendar, since, until, now):
+def skill_effect(rounds, since, until):
+    """Per week (its Monday): judged boards, UP ones with ETF choices from the AI, and UNKNOWN ones.
+
+    ``rounds`` are (report time, {sector: (state, phase, repeats earlier evidence)}, {sector: number of ETFs chosen}).
+    """
+    weeks = {}
+    for at, sectors, chosen in rounds:
+        day = moment(at).date()
+        if not since <= day <= until:
+            continue
+        week = weeks.setdefault((day - timedelta(days=day.weekday())).isoformat(), dict.fromkeys(
+            ("reports", "judged_boards", "up_boards", "up_with_etf_choices", "unknown_boards"), 0))
+        week["reports"] += 1
+        for sid, (state, phase, repeated) in sectors.items():
+            if phase == "NOT_COVERED":
+                continue
+            week["judged_boards"] += 1
+            week["unknown_boards"] += state == "UNKNOWN"
+            if state == "UP" and not repeated:
+                week["up_boards"] += 1
+                week["up_with_etf_choices"] += bool(chosen.get(sid))
+    def share(part, whole):
+        return str((Decimal(part) / whole).quantize(SIX)) if whole else None
+    return [dict(week_of=key, **row, up_with_etf_choices_ratio=share(row["up_with_etf_choices"], row["up_boards"]),
+                 unknown_ratio=share(row["unknown_boards"], row["judged_boards"])) for key, row in sorted(weeks.items())]
+
+
+def report(cycles, quotes, closes, batches, calendar, since, until, now, rounds=()):
     days = [day for day in calendar.days if since <= day <= until]
     planned = [cycle for cycle in cycles if "exit_plan" in cycle and cycle["book"]["fills"]
                and since <= moment(cycle["book"]["fills"][0]["filled_at"]).date() <= until]
     entries = [dict(etf=cycle["etf"], bought_at=cycle["book"]["fills"][0]["filled_at"], rule=cycle["rule"]["version"],
-                    migrated="migration" in cycle, flags=cycle["exit_plan"]["flags"], entry=cycle.get("entry"))
+                    migrated="migration" in cycle, flags=cycle["exit_plan"]["flags"],
+                    entry_market_regime=(None if FALLBACK in cycle["exit_plan"]["flags"]
+                                         else cycle["exit_plan"]["market_regime"]), entry=cycle.get("entry"))
                for cycle in planned]
     gaps = [row for cycle in cycles for day in days
             if datetime.combine(day, time(15), CHINA) <= now
@@ -136,9 +167,9 @@ def report(cycles, quotes, closes, batches, calendar, since, until, now):
             average_overnight_gap_after_exit_line=str((sum(extra) / len(extra)).quantize(SIX)) if extra else None,
             index_bar_sessions=len(bars), dual_stored=sum(row["DUAL"] for row in bars),
             single_stored=sum(row["SINGLE"] for row in bars))
-    return dict(schema_version="stock-v4-exit-observation-v1", note="read-only; no ledger row was written",
+    return dict(schema_version="stock-v4-exit-observation-v2", note="read-only; no ledger row was written",
                 since=since.isoformat(), until=until.isoformat(), summary=summary, entries=entries,
-                late_round_gaps=gaps, index_bars=bars)
+                late_round_gaps=gaps, index_bars=bars, skill_effect=skill_effect(rounds, since, until))
 
 
 def load(ledger, since):
@@ -173,7 +204,20 @@ def load(ledger, since):
                    for code, body, collected in conn.execute("""SELECT scope->>'StockID',body,collected_at
                        FROM supplier_market_batches WHERE provider='kaipanla' AND endpoint='107'
                        AND scope->>'purpose'='index-kline' ORDER BY collected_at,batch_id""").fetchall()]
-    return _decode(run[0]), cycles, quotes, closes, batches
+        # A saved report carries its whole source document; three facts per board are read from it.
+        rounds = [(at, {sid: (row.get("state"), row.get("phase"), bool(row.get("duplicate_evidence")))
+                        for sid, row in (_decode(sectors) or {}).items()}, _decode(chosen) or {})
+                  for at, sectors, chosen in conn.execute(
+                      """SELECT payload->>'at',
+                           (SELECT jsonb_object_agg(key,jsonb_build_object('state',value->'state','phase',value->'phase',
+                               'duplicate_evidence',value->'duplicate_evidence')) FROM jsonb_each(payload->'sectors')),
+                           (SELECT jsonb_object_agg(key,jsonb_array_length(value))
+                              FROM jsonb_each(payload->'input_meta'->'octop'->'etf_choices')
+                             WHERE jsonb_typeof(value)='array')
+                         FROM events WHERE ns=%s AND kind='report' AND at>=%s
+                           AND jsonb_typeof(payload->'sectors')='object' ORDER BY at,id""",
+                      (ledger.ns, datetime.combine(since, time(), CHINA).isoformat())).fetchall()]
+    return _decode(run[0]), cycles, quotes, closes, batches, rounds
 
 
 def main(argv=None):
@@ -190,10 +234,10 @@ def main(argv=None):
     until = args.until or now.date()
     loaded = load(PostgresLedger(settings, "LIVE"), args.since)
     if loaded is None:
-        result = dict(schema_version="stock-v4-exit-observation-v1", note="no run recorded in this namespace")
+        result = dict(schema_version="stock-v4-exit-observation-v2", note="no run recorded in this namespace")
     else:
-        config, cycles, quotes, closes, batches = loaded
-        result = report(cycles, quotes, closes, batches, Calendar(config["calendar"]), args.since, until, now)
+        config, cycles, quotes, closes, batches, rounds = loaded
+        result = report(cycles, quotes, closes, batches, Calendar(config["calendar"]), args.since, until, now, rounds)
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
     return 0

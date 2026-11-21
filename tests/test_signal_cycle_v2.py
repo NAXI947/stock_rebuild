@@ -458,14 +458,14 @@ class PostgresVersions(TestCase):
         with self.store._connect() as conn:
             seen = read(conn, self.settings.namespace, plain)
             self.assertEqual(seen, dict(
-                entry_market_regime=BEAR, entry_round_slot="13:05", entry_up_streak=2,
+                entry_round_slot="13:05", entry_up_streak=2,
                 entry_market_breadth_ratio="0.150000", report_id="entry", breadth_boards=dict(up=30, down=160, flat=10),
                 breadth_observed_at=stage1.D1 + "T13:05:11+08:00"))
             # A fallback regime and a report without the facts stay empty rather than guessed.
             other = dict(plain, exit_plan=dict(plain["exit_plan"], flags=["REGIME_FALLBACK_RANGE"]),
                          orders=[dict(plain["orders"][0], report_id="r2")])
             self.assertEqual(read(conn, self.settings.namespace, other), dict(
-                entry_market_regime=None, entry_round_slot=None, entry_up_streak=1, entry_market_breadth_ratio=None,
+                entry_round_slot=None, entry_up_streak=1, entry_market_breadth_ratio=None,
                 report_id="r2", breadth_boards=None, breadth_observed_at=None))
             missing = dict(plain, orders=[dict(plain["orders"][0], report_id="absent")])
             self.assertIsNone(read(conn, self.settings.namespace, missing)["entry_up_streak"])

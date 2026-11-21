@@ -165,9 +165,10 @@ docker exec -i stock-v4-backend python - --etf 512800.SH [--apply] < tools/migra
 
 ## 观测数据（只读，不参与决策）
 
-* 建仓元数据：LIVE 买单成交时，周期里多存一项 `entry`，含 `entry_market_regime`（与退出计划冻结的档位相同，
-  回退为震荡档时为空）、`entry_round_slot`、`entry_up_streak`（主板块到入场报告为止连续为 `UP` 的已保存报告数，
-  最多回看 10 份）、`entry_market_breadth_ratio`（入场报告的上涨板块数 ÷ 涨、跌、平板块数之和）。
+* 建仓元数据：LIVE 买单成交时，周期里多存一项 `entry`，含 `entry_round_slot`、`entry_up_streak`（主板块到入场报告
+  为止连续为 `UP` 的已保存报告数，最多回看 10 份）、`entry_market_breadth_ratio`（入场报告的上涨板块数 ÷ 涨、跌、
+  平板块数之和）。入场大盘档位已冻结在 `exit_plan.market_regime`，不重复存；统计工具输出时从退出计划读出
+  `entry_market_regime`（回退为震荡档时为空）。
   全部取自已保存的报告；取不到的保持为空。引擎、订单和退出计划都不读这一项。迁移来的周期没有这一项。
 * 收盘后统计：`tools/exit_observation.py` 只读已保存的周期、报价、ETF 日线批次和 107 指数批次，不采集、不写入。
 
@@ -176,7 +177,8 @@ python -B -m tools.exit_observation --env-file /absolute/.env --since 2026-11-16
 docker exec -i stock-v4-backend python - --since 2026-11-16 < tools/exit_observation.py
 ```
 
-  输出三部分：`entries`（每笔建仓的规则版本、回退标记和建仓元数据，汇总 `atr_unavailable`、`regime_fallback_range`）；
+  输出四部分：`entries`（每笔建仓的规则版本、回退标记和建仓元数据，汇总 `atr_unavailable`、`regime_fallback_range`）；
   `late_round_gaps`（每笔持仓每个交易日：当日最后一条采样报价之后，收盘价是否越过止损、保本、移动止盈或目标止盈线，
   以及次日第一条采样报价相对收盘的缺口；汇总里 `crossed_lines` 按线计数，隔夜缺口均值只算三条清仓线）；`index_bars`（每个交易日的 107 指数日线是否在下一个交易日开盘前落库，
-  分 DUAL 和 SINGLE）。日线没有落库的交易日记为 `CLOSE_NOT_STORED`，不推算。
+  分 DUAL 和 SINGLE）；`skill_effect`（按周：已研判的板块轮次数、非重复证据的 `UP` 板块轮次中 AI 给出 `etf_choices`
+  的比例、`UNKNOWN` 占比，用于对比新版 `SKILL.md` 上线前后）。日线没有落库的交易日记为 `CLOSE_NOT_STORED`，不推算。

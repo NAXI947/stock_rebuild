@@ -2,16 +2,16 @@
 from decimal import Decimal
 import json
 
-from .market_regime import FALLBACK
-
 LOOKBACK = 10
 
 
 def read(conn, ns, cycle):
-    """Four entry fields from the saved entry report and the reports before it; a missing fact stays None."""
-    plan, report_id = cycle["exit_plan"], cycle["orders"][0]["report_id"]
-    result = dict(entry_market_regime=None if FALLBACK in plan["flags"] else plan["market_regime"],
-                  entry_round_slot=None, entry_up_streak=None, entry_market_breadth_ratio=None,
+    """Three entry fields from the saved entry report and the reports before it; a missing fact stays None.
+
+    The entry market regime is already frozen in the cycle's exit plan and is not copied here.
+    """
+    report_id = cycle["orders"][0]["report_id"]
+    result = dict(entry_round_slot=None, entry_up_streak=None, entry_market_breadth_ratio=None,
                   report_id=report_id, breadth_boards=None, breadth_observed_at=None)
     rows = conn.execute("""SELECT id,payload->>'round_slot',payload->'sectors'->%s->>'state',
             payload->'input_meta'->'market_scope'->'board_counts',payload->'input_meta'->>'source_observed_at'

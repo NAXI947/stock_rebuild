@@ -5,7 +5,7 @@ from unittest import TestCase
 
 from modules.strategy_hermes.signal_cycle import create_cycle, process_quote
 from modules.strategy_hermes.simulator import CHINA, Calendar, Rules
-from tools.exit_observation import report
+from tools.exit_observation import report, skill_effect
 
 DAYS = ["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"]
 CALENDAR = Calendar(DAYS)
@@ -35,8 +35,7 @@ class ExitObservation(TestCase):
         quotes = [quote(0, "09:36", "1.000"), quote(1, "14:31", "0.990"), quote(2, "09:36", "0.940"),
                   quote(2, "09:37", "0.941")]
         cycle = self.held(quotes[:2], dict(market_regime="RANGE_ROTATION", flags=[], atr20="0.030"))
-        cycle["entry"] = dict(entry_market_regime="RANGE_ROTATION", entry_round_slot="09:35", entry_up_streak=1,
-                              entry_market_breadth_ratio="0.688000")
+        cycle["entry"] = dict(entry_round_slot="09:35", entry_up_streak=1, entry_market_breadth_ratio="0.688000")
         self.assertEqual((cycle["status"], cycle["exit_plan"]["stop_loss"]), ("OPEN", "0.0300"))
         closes = close(0, "1.001") | close(1, "0.965")
         batches = [("SH000300", datetime(2026, 11, 2, 15, 40, tzinfo=CHINA), {DAYS[0]}),
@@ -59,7 +58,8 @@ class ExitObservation(TestCase):
             close_crossed_a_line=1, crossed_lines=dict(STOP_LOSS_HIT=1),
             average_overnight_gap_after_exit_line="-0.025907",
             index_bar_sessions=2, dual_stored=1, single_stored=1))
-        self.assertEqual(result["entries"][0]["entry"]["entry_round_slot"], "09:35")
+        self.assertEqual((result["entries"][0]["entry"]["entry_round_slot"], result["entries"][0]["entry_market_regime"]),
+                         ("09:35", "RANGE_ROTATION"))
         self.assertEqual([(row["trade_date"], row["DUAL"], row["SINGLE"]) for row in result["index_bars"]],
                          [(DAYS[0], False, True), (DAYS[1], True, False)])
 
@@ -100,3 +100,20 @@ class ExitObservation(TestCase):
         row, = report([reduced], {ETF: quotes}, closes, [], CALENDAR, date(2026, 11, 3), date(2026, 11, 3),
                       NOW)["late_round_gaps"]
         self.assertEqual((row["crossed"], row["line"]), (False, None))
+
+    def test_skill_effect_counts_up_boards_with_etf_choices_and_unknown_boards_per_week(self):
+        def row(state, phase, repeated=False):
+            return state, phase, repeated
+        rounds = [("2026-11-02T09:38:00+08:00", dict(a=row("UP", "NEW"), b=row("UP", "STRENGTHEN"), c=row("UNKNOWN", "UNKNOWN"),
+                                                     d=row("UNKNOWN", "NOT_COVERED")), dict(a=2, b=0)),
+                  ("2026-11-06T14:33:00+08:00", dict(a=row("UP", "STRENGTHEN", True), b=row("HOLD", "MAINTAIN")), dict(a=1)),
+                  ("2026-11-09T09:38:00+08:00", dict(a=row("WEAK", "WEAKEN")), {}),
+                  ("2026-11-16T09:38:00+08:00", dict(a=row("UP", "NEW")), dict(a=1))]
+        frozen = deepcopy(rounds)
+        weeks = skill_effect(rounds, date(2026, 11, 2), date(2026, 11, 13))
+        self.assertEqual(rounds, frozen)
+        self.assertEqual(weeks, [
+            dict(week_of="2026-11-02", reports=2, judged_boards=5, up_boards=2, up_with_etf_choices=1, unknown_boards=1,
+                 up_with_etf_choices_ratio="0.500000", unknown_ratio="0.200000"),
+            dict(week_of="2026-11-09", reports=1, judged_boards=1, up_boards=0, up_with_etf_choices=0, unknown_boards=0,
+                 up_with_etf_choices_ratio=None, unknown_ratio="0.000000")])

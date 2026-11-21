@@ -449,8 +449,11 @@ function reportDetail(panel,row,refreshReport) {
   const hybrid=row.input_meta?.etf_recommendations;
   const directionFirst=["etf-direction-first-v2","etf-direction-first-v3"].includes(hybrid?.method);
   const explain=(hybrid || row.input_meta?.penetration)?.sectors || {};
-  const missingWeights=Math.max(0,...Object.values(explain).map(s=>s.coverage_gaps?.weights?.products || 0));
-  if (missingWeights) panel.append(elt("p","资料待补：目录"+missingWeights+"只ETF缺可用成分权重，穿透待核验。","muted"));
+  // Reports saved before the strategy-scope count carry only the catalogue-wide one.
+  const weightGaps=Object.values(explain).map(s=>s.coverage_gaps?.weights || {});
+  const scoped=weightGaps.some(gap=>"scope_products" in gap);
+  const missingWeights=Math.max(0,...weightGaps.map(gap=>(scoped ? gap.scope_products : gap.products) || 0));
+  if (missingWeights) panel.append(elt("p","资料待补："+(scoped ? "策略范围内" : "目录")+missingWeights+"只ETF缺可用成分权重，穿透待核验。","muted"));
   const rejectionLabels = {
     SECTOR_MEMBERS_UNAVAILABLE:"缺板块成分", WEIGHTS_UNVERIFIED:"权重待核验", PRODUCT_RULE_UNVERIFIED:"交易规则待核验",
     MAINBOARD_LOW_OR_UNKNOWN:"主板权重不足或待核验", EXPOSURE_LOW:"板块暴露不足", CORE_EXPOSURE_LOW:"核心股暴露不足",

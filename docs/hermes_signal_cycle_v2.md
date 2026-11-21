@@ -1,7 +1,7 @@
 # hermes_signal_cycle_v2 退出规则
 
 2026-11-20 用户授权（`CLAUDE.md` 第 31 条）。v2 只改变退出，不改入场、OCTOP 提示词和报告格式；
-已开的 v1 周期继续按冻结的 v1 规则运行。
+已开的 v1 周期继续按冻结的 v1 规则运行（唯一例外见“在途 v1 周期迁移”）。
 
 ## 代码入口
 
@@ -101,6 +101,26 @@ docker exec -i stock-v4-backend python - < tools/shadow_exit_v2.py     # 镜像�
 * 两边都按该 ETF 最新一条有效报价估值；`summary` 给出已成交退出的原因码计数、回退标注次数、
   成交价相对触发价的平均偏离、已清仓周期的平均持有交易日、收益率差的均值。
 * 模拟周期重新走买入撮合，入场准入、资金规则与记录周期相同；记录周期里人工或准入造成的差异不会被复现。
+
+## 在途 v1 周期迁移
+
+2026-11-21 用户授权（`CLAUDE.md` 第 32 条）：执行服务器当时在途的 512800、512480、588100 三笔 v1 周期改按 v2 管理。
+这是一次性例外，`tools/migrate_cycles_to_exit_v2.py` 只处理命令行点名、且周期编号在工具内 `AUTHORISED` 名单里的这三笔，
+其他周期一律拒绝；不带 `--apply` 时只读。
+
+```bash
+python -B -m tools.migrate_cycles_to_exit_v2 --env-file /absolute/.env --etf 512800.SH --atr 512800.SH=0.018764@2026-11-12
+docker exec -i stock-v4-backend python - --etf 512800.SH --atr ... [--apply] < tools/migrate_cycles_to_exit_v2.py
+```
+
+* 只接受 `OPEN`、规则为 v1、没有待成交订单的周期；已是 v2 的周期报告 `ALREADY_V2` 并跳过，可重复执行。
+* 写入内容：`rule` 换成 v2 快照；`exit_plan` 按首笔买入成交价和成交日生成，标注 `MIGRATED_FROM_V1`；
+  `peak_price`、`breakeven_armed`、`weak_trade_days`、`last_quote` 由买入之后已保存的报价和报告按引擎同样的口径算出；
+  `migration` 保留迁移时刻和原 v1 快照。成交、订单、现金、持仓不变，工具不生成卖单。
+* 档位用已入库的 107 日线、只读买入成交日之前的交易日（这批 K 线是买入之后才采集的）。ATR20 由 `--atr` 给出，
+  不给则各线取下限并标注 `ATR_UNAVAILABLE`。
+* 输出的 `next_session` 列出下一交易日的止损价、保本价、移动止盈价和 14:05 后是否到期，写入前先看这一段。
+* 写入与账本入口用同一把运行空间锁，整批在一个事务里。
 
 ## 运行与测试
 

@@ -57,10 +57,10 @@ class QuoteFollowup(TestCase):
         self.records = {}
         self.old = market("13:05:09")
 
-    def perform(self, now="13:06:46", *, cycles=None, fresh=None, failure=None, paused=False):
+    def perform(self, now="13:06:46", *, cycles=None, fresh=None, failure=None, paused=False, anchors=None):
         current = at(now)
         saved = []
-        with patch.object(followup, "read_state", return_value=(self.anchor, cycles or [cycle()], self.records)), \
+        with patch.object(followup, "read_state", return_value=(anchors or [self.anchor], cycles or [cycle()], self.records)), \
              patch.object(followup, "shared_market", return_value=self.old), \
              patch.object(followup, "RequestLog") as budget, \
              patch.object(followup, "quote_pool", return_value={"batch": "batch-1"}) as provider, \
@@ -98,6 +98,62 @@ class QuoteFollowup(TestCase):
         self.assertEqual(len(c["book"]["fills"]), 1)
         self.assertEqual(c["book"]["fills"][0]["filled_at"], at("13:06:40").isoformat())
         self.assertEqual(len(saved), 1)
+
+    def failed(self, slot="14:05", planned="14:05:00"):
+        return dict(slot=slot, at=at(planned).isoformat(), report_id=None, sells_only=True,
+                    keys=followup.run_keys(self.ledger.ns, DAY, slot))
+
+    def test_failed_round_prices_an_existing_sell_from_its_own_budget(self):
+        failed = self.failed()
+        self.old = market("14:05:02")
+        for anchors in ([failed, self.anchor], [failed]):
+            result, provider, publish, budget, saved = self.perform("14:15:04", anchors=anchors, fresh=market("14:15:03"),
+                                                                    cycles=[cycle("14:05:03")])
+            self.assertEqual((result["status"], result["slot"], result["report_id"], result["failed_round"], result["covered"]),
+                             ("PUBLISHED", "14:05", None, True, [CODE]))
+            self.assertEqual((result["run_key"], budget.call_args.args[1]), (failed["keys"][0], failed["keys"][0]))
+            provider.assert_called_once()
+        # The first attempt is timed from the planned start of the failed round.
+        self.assertIsNone(self.perform("14:05:29", anchors=[failed], cycles=[cycle("14:05:03")])[0])
+
+    def test_failed_round_sample_refreshes_only_the_quotes_of_its_sells(self):
+        other = "510001.SH"
+        def sample(clock, price):
+            body = deepcopy(market(clock).body)
+            body["quotes"][other] = {"price_cny": price, "observed_at": at(clock).isoformat()}
+            return SharedMarket.read(body)
+        self.old = sample("14:05:02", "10")
+        _, _, publish, _, _ = self.perform("14:15:04", anchors=[self.failed()], cycles=[cycle("14:05:03")],
+                                           fresh=sample("14:15:03", "11"))
+        quotes = publish.call_args.args[2]["quotes"]
+        self.assertEqual((quotes[CODE]["observed_at"], quotes[other]),
+                         (at("14:15:03").isoformat(), {"price_cny": "10", "observed_at": at("14:05:02").isoformat()}))
+        partial = publish.call_args.args[2]["snapshot_id"]
+        # A published round still shares the whole sample, under an identity of its own.
+        _, _, publish, _, _ = self.perform("14:15:04", cycles=[cycle("14:05:03")], fresh=sample("14:15:03", "11"))
+        self.assertEqual(publish.call_args.args[2]["quotes"][other]["price_cny"], "11")
+        self.assertNotEqual(publish.call_args.args[2]["snapshot_id"], partial)
+
+    def test_failed_round_never_prices_a_buy_and_falls_back_when_spent(self):
+        waiting = dict(etf=CODE, primary_sector="bank", status="WAIT_BUY", unit=100, rule=asdict(Rules()),
+                       book=new_book(Rules()), reduced=False,
+                       orders=[dict(id="buy", action="BUY", status="PENDING", requested_at=at("13:06:16").isoformat(),
+                                    eligible_at=at("13:06:16").isoformat(), remaining=None, target=None)])
+        failed = self.failed()
+        self.old = market("13:05:09")
+        result, provider, _, _, _ = self.perform("14:15:04", cycles=[waiting], anchors=[failed])
+        self.assertIsNone(result)
+        provider.assert_not_called()
+        # With a published round behind it the buy keeps the follow-up it always had.
+        result, _, _, budget, _ = self.perform("14:15:04", cycles=[waiting], anchors=[failed, self.anchor],
+                                               fresh=market("14:15:03"))
+        self.assertEqual((result["slot"], result["report_id"], "failed_round" in result), ("13:05", "report-1305", False))
+        # A sell whose failed round has used its three attempts falls back the same way.
+        for key in failed["keys"]:
+            self.records[key] = {followup.SOURCE: dict(status="FAILED", started_at=at("14:10:00").isoformat())}
+        result, _, _, budget, _ = self.perform("14:15:04", anchors=[failed, self.anchor], fresh=market("14:15:03"))
+        self.assertEqual((result["slot"], result["run_key"]), ("13:05", self.keys[0]))
+        self.assertIsNone(self.perform("14:15:04", anchors=[failed])[0])
 
     def test_http_disabled_skips_provider_budget_and_database(self):
         with patch.dict(os.environ, {"DISABLE_EXTERNAL_PROVIDER_HTTP": "true"}):
@@ -292,7 +348,7 @@ class QuoteFollowupDatabase(TestCase):
         self.addCleanup(self.clean_requests, helper.store, keys)
         budget = followup.RequestLog(facade, keys[0])
         budget.call(followup.SOURCE, followup.SCOPE, lambda: {"batch": "saved-before-restart"}, limit=1)
-        anchor, cycles, records = followup.read_state(facade, D2)
+        (anchor,), cycles, records = followup.read_state(facade, D2)
         self.assertEqual(anchor["report_id"], "followup-weak")
         self.assertEqual(cycles[0]["orders"][-1]["target"], 500)
         self.assertEqual(records[keys[0]][followup.SOURCE]["status"], "SAVED")
@@ -314,6 +370,59 @@ class QuoteFollowupDatabase(TestCase):
         self.assertIn(followup.OUTCOME, records[keys[0]])
         with patch.object(followup, "quote_pool", side_effect=AssertionError("already filled")):
             self.assertIsNone(followup.tick(facade, helper.cache, helper.key, FROZEN_DAYS, "fixture", clock=lambda: now))
+        # A later round that fails adds its own sell-only anchor in front; a published one after it removes it again.
+        claim = helper.store.claim_round(D2, "14:05", planned_at(D2, "14:05"))
+        helper.store.fail_round(claim, "NATIVE_ROUND_DEADLINE")
+        anchors, _, records = followup.read_state(facade, D2)
+        self.assertEqual([(a["slot"], a["report_id"], a.get("sells_only", False), a["keys"]) for a in anchors],
+                         [("14:05", None, True, followup.run_keys(facade.ns, D2, "14:05")), ("13:05", "followup-weak", False, keys)])
+        self.assertEqual(moment(anchors[0]["at"]), moment(stamp(D2, "14:05")))
+        self.assertIn(followup.OUTCOME, records[keys[0]])
+        # A newer round that is still running already retires the failed one.
+        claim = helper.store.claim_round(D2, "14:30", planned_at(D2, "14:30"))
+        anchors, _, _ = followup.read_state(facade, D2)
+        self.assertEqual([(a["slot"], a["report_id"]) for a in anchors], [("13:05", "followup-weak")])
+        helper.store.publish(claim, report("followup-late", D2, "14:30", [(A, "维持")]), FROZEN_DAYS, {ETF: 100}, {},
+                             targets=("redis",))
+        anchors, _, _ = followup.read_state(facade, D2)
+        self.assertEqual([(a["slot"], a["report_id"]) for a in anchors], [("14:30", "followup-late")])
+
+    def test_failed_first_round_still_fills_a_quote_triggered_v2_exit(self):
+        from dataclasses import replace
+        from test_stage2_postgres import StageTwo
+        from test_stage1 import D1, D2, DAYS as FROZEN_DAYS, ETF, stamp
+        from modules.strategy_hermes.stage2.worker import apply_market, planned_at
+        helper = StageTwo()
+        helper.setUp()
+        self.addCleanup(helper.doCleanups)
+        helper.store.settings = replace(helper.settings, evaluation_rule="hermes_signal_cycle_v2", regime_mode="DUAL")
+        helper.publish("v2-entry", D1, "09:35", "新增", helper.market(D1, "09:34", "10"))
+        helper.quotes(D1, "09:36", "10", 1)
+        # The opening sample of the next day's first round breaks the stop; then that round fails.
+        helper.quotes(D2, "09:35", "9.60", 2)
+        claim = helper.store.claim_round(D2, "09:35", planned_at(D2, "09:35"))
+        helper.store.fail_round(claim, "NATIVE_ROUND_DEADLINE")
+        waiting, = helper.store.inspect()["cycles"]
+        self.assertEqual((waiting["status"], waiting["orders"][-1]["trigger_reason"]), ("WAIT_EXIT", "STOP_LOSS_HIT"))
+        facade = SimpleNamespace(ns=helper.store.ns, origin="LIVE", settings=helper.settings, _connect=helper.store._connect)
+        keys = followup.run_keys(facade.ns, D2, "09:35")
+        self.addCleanup(self.clean_requests, helper.store, keys)
+        now = moment(stamp(D2, "09:46"))
+        fresh_body = deepcopy(followup.shared_market(helper.store, helper.cache, key=helper.key).body)
+        fresh_body.update(snapshot_id="after-failed-round", observed_at=now.isoformat())
+        fresh_body["quotes"][ETF].update(observed_at=now.isoformat(), price_cny="9.55", revision_seq=3)
+        with patch.object(followup, "quote_pool", return_value={"batch": "after-failed-round"}) as provider, \
+             patch.object(followup, "merge_quotes", return_value=fresh_body):
+            result = followup.tick(facade, helper.cache, helper.key, FROZEN_DAYS, "fixture", clock=lambda: now)
+            self.assertEqual((result["status"], result["slot"], result["report_id"], result["failed_round"], result["run_key"]),
+                             ("PUBLISHED", "09:35", None, True, keys[0]))
+            apply_market(helper.store, now, FROZEN_DAYS, helper.map,
+                         followup.shared_market(helper.store, helper.cache, key=helper.key))
+            closed, = helper.store.inspect()["cycles"]
+            self.assertEqual((closed["status"], closed["orders"][-1]["status"], closed["book"]["fills"][-1]["price"]),
+                             ("CLOSED", "FILLED", "9.55"))
+            self.assertIsNone(followup.tick(facade, helper.cache, helper.key, FROZEN_DAYS, "fixture", clock=lambda: now))
+        provider.assert_called_once()
 
     @staticmethod
     def clean_requests(store, keys):

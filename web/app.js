@@ -842,7 +842,7 @@ function sectorEtfPenetration(data) {
   }
   box.append(grid);
   if(mapping){
-    const state=[mapping.status?"最近一次维护 "+mapping.status:null,Number.isFinite(mapping.pending)?"待补 "+mapping.pending+" 项":null,
+    const state=[mapping.status?"最近一次维护 "+({PARTIAL:"部分完成，有待补项",COMPLETE:"全部完成"}[mapping.status] || mapping.status):null,Number.isFinite(mapping.pending)?"待补 "+mapping.pending+" 项":null,
       mapping.review_required?"待人工复核 "+mapping.review_required+" 项":null].filter(Boolean).join(" · ");
     if(state)box.append(elt("p",state,"sector-etf-state"));
     if(mapping.message)box.append(elt("p",mapping.message,"sector-etf-scope"));
@@ -867,7 +867,7 @@ function sectorEtfPenetration(data) {
     }
     box.append(sectorEtfFold("近期映射变动",recent.length,list));
   }
-  if(gaps.indexes?.length)box.append(sectorEtfFold("缺权重的指数（按影响 ETF 数排序）",gaps.index_count,table(["指数","影响 ETF","示例"],gaps.indexes.map(row=>[
+  if(gaps.indexes?.length)box.append(sectorEtfFold("缺权重的指数（按影响 ETF 数排序"+(gaps.index_count>gaps.indexes.length?"，列前 "+gaps.indexes.length+" 个":"")+"）",gaps.index_count,table(["指数","影响 ETF","示例"],gaps.indexes.map(row=>[
     elt("span",row.index || "未登记跟踪指数","numeric"),elt("span",panoramaCount(row.etfs),"numeric"),
     (row.samples || []).map(etf=>etf.name || etf.code).join("、")+(row.etfs>(row.samples || []).length?" 等":"")]),"")));
   const names=rows=>elt("p",rows.map(row=>row.name || row.id).join("、"),"sector-etf-scope");
@@ -876,7 +876,8 @@ function sectorEtfPenetration(data) {
   if(current.empty_sectors?.length){
     const list=elt("p",undefined,"sector-etf-chips");
     for(const row of current.empty_sectors){
-      const chip=elt("span",(row.name || row.id)+(row.in_mapping?" · 映射已补":""),row.in_mapping?undefined:"muted");
+      const lacking=row.reason==="SECTOR_MEMBERS_UNAVAILABLE";
+      const chip=elt("span",(row.name || row.id)+(lacking?(row.in_mapping?" · 成分股已补":" · 仍缺成分股"):" · 无对应 ETF"),lacking && !row.in_mapping?undefined:"muted");
       chip.title=[row.id,rejectionLabels[row.reason] || row.reason].filter(Boolean).join("\n");list.append(chip);
     }
     box.append(sectorEtfFold("最新报告里穿透为空的板块",current.empty_sectors.length,list));

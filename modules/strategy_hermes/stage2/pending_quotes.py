@@ -3,10 +3,11 @@
 This is an execution stage of a round, not another analysis clock. The request
 journal survives restart; every round has at most three provider calls. A
 published round serves every executable pending order. A failed round has no
-report, so its three calls serve only sell orders that already exist.
+report, so its three calls serve only sell orders that already exist. The
+14:30 round spreads its three calls to 14:50 while a sell is waiting.
 """
 from copy import deepcopy
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 import os
 
 from redis.exceptions import RedisError
@@ -22,6 +23,8 @@ from .market_bootstrap import ProbeError
 from .entry_admission import read_states, update_waiting_buy
 
 DELAYS = (30, 120, 300)
+# The last round of the day has no later round to price a waiting sell, so its three calls reach towards the close.
+LATE_SLOT, LATE_DELAYS, LATE_FINAL, LATE_GAP = "14:30", (60, 300), time(14, 50), 60
 SOURCE = "tickflow:quotes"
 OUTCOME = "pending-quotes:outcome"
 SCOPE = ["CN_ETF"]
@@ -76,8 +79,19 @@ def run_keys(namespace, day, slot):
     return [f"{scope}:feed:{day}:{slot.replace(':', '')}:post:{i}" for i in range(1, 4)]
 
 
-def choose_attempt(published_at, records, keys, now):
+def schedule(at, late=False):
+    """Earliest time of each attempt and the real seconds it must leave after the attempt before it."""
+    if not late:
+        return [(at + timedelta(seconds=delay), delay - (DELAYS[i - 1] if i else 0)) for i, delay in enumerate(DELAYS)]
+    first, second = (at + timedelta(seconds=delay) for delay in LATE_DELAYS)
+    final = datetime.combine(at.date(), LATE_FINAL, tzinfo=at.tzinfo)
+    return [(first, 0), (second, LATE_DELAYS[1] - LATE_DELAYS[0]),
+            (max(final, second + timedelta(seconds=LATE_GAP)), LATE_GAP)]
+
+
+def choose_attempt(published_at, records, keys, now, late=False):
     """Resume saved input; otherwise respect real time between physical attempts."""
+    plan = schedule(published_at, late)
     for i, key in enumerate(keys):
         record = records.get(key, {})
         request = record.get(SOURCE)
@@ -87,13 +101,12 @@ def choose_attempt(published_at, records, keys, now):
             if request["status"] == "SAVED":
                 return key  # Crash after collection: reuse this exact supplier batch.
             continue  # STARTED is uncertain, FAILED consumed its one request.
-        due = published_at + timedelta(seconds=DELAYS[i])
+        due, gap = plan[i]
         previous = records.get(keys[i - 1], {}).get(SOURCE) if i else None
         if i and previous is None:
             return None
         if previous:
-            due = max(due, moment(previous["started_at"]) +
-                      timedelta(seconds=DELAYS[i] - DELAYS[i - 1]))
+            due = max(due, moment(previous["started_at"]) + timedelta(seconds=gap))
         return key if now >= due else None
     return None
 
@@ -183,7 +196,8 @@ def tick(ledger, cache, key, days, config, *, paused=lambda: False, clock=lambda
             orders = {code: after for code, after in every.items() if code in sells} if anchor.get("sells_only") else every
             needed = missing_prices(orders, previous, calendar, now) if orders else []
             # The caller consumes the shared sample on every tick, so a covered order needs no request.
-            run_key = choose_attempt(moment(anchor["at"]), records, anchor["keys"], now) if needed else None
+            late = anchor["slot"] == LATE_SLOT and not sells.isdisjoint(orders)
+            run_key = choose_attempt(moment(anchor["at"]), records, anchor["keys"], now, late) if needed else None
             if run_key is not None:
                 break
         else:

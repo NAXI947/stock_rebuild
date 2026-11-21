@@ -155,6 +155,59 @@ class QuoteFollowup(TestCase):
         self.assertEqual((result["slot"], result["run_key"]), ("13:05", self.keys[0]))
         self.assertIsNone(self.perform("14:15:04", anchors=[failed])[0])
 
+    def test_last_round_spreads_its_three_calls_to_1450_while_a_sell_waits(self):
+        keys = followup.run_keys(self.ledger.ns, DAY, "14:30")
+        late = dict(slot="14:30", at=at("14:33:00").isoformat(), report_id="report-1430", keys=keys)
+        sell, stale = [cycle("14:33:00")], market("14:30:09")
+        self.old = stale
+        used = []
+        for now, key in (("14:33:59", None), ("14:34:00", keys[0]), ("14:37:59", None), ("14:38:00", keys[1]),
+                         ("14:49:59", None), ("14:50:00", keys[2])):
+            fresh = market("14:49:58") if now == "14:50:00" else stale
+            result, provider, publish, _, _ = self.perform(now, anchors=[late], cycles=sell, fresh=fresh)
+            self.assertEqual(result and result["run_key"], key, now)
+            if key:
+                # The 14:34 and 14:38 samples bring no price after the signal; the one at 14:50 does.
+                self.assertEqual(result["status"], "PUBLISHED" if key == keys[2] else "NO_NEW_PENDING_PRICE")
+                self.records[key] = {followup.SOURCE: dict(status="SAVED", started_at=at(now).isoformat()),
+                                     followup.OUTCOME: dict(status="SAVED")}
+                used.append(provider.call_count)
+        self.assertEqual((used, publish.call_count), ([1, 1, 1], 1))
+        self.assertIsNone(self.perform("14:55:00", anchors=[late], cycles=sell)[0])
+        filled = sell[0]
+        fill(filled, dict(id="q-1450", etf=CODE, observed_at=at("14:49:58").isoformat(), received_at=at("14:50:01").isoformat(),
+                          price_cny="0.913", source="tickflow", tradeable=True, revision=0), CALENDAR)
+        self.assertEqual(filled["orders"][-1]["status"], "FILLED")
+
+    def test_last_round_schedule_holds_for_failed_rounds_late_restarts_and_nothing_else(self):
+        keys = followup.run_keys(self.ledger.ns, DAY, "14:30")
+        failed = self.failed("14:30", "14:30:00")
+        self.old = market("14:05:02")
+        self.assertIsNone(self.perform("14:30:59", anchors=[failed], cycles=[cycle("14:05:03")])[0])
+        result = self.perform("14:31:00", anchors=[failed], cycles=[cycle("14:05:03")], fresh=market("14:30:58"))[0]
+        self.assertEqual((result["run_key"], result["failed_round"]), (keys[0], True))
+        # A worker that was down until 14:49:30 still leaves real time before the last call.
+        published = at("14:33:00")
+        records = {keys[0]: {followup.SOURCE: dict(status="FAILED", started_at=at("14:34:00").isoformat())},
+                   keys[1]: {followup.SOURCE: dict(status="FAILED", started_at=at("14:49:30").isoformat())}}
+        self.assertIsNone(followup.choose_attempt(published, records, keys, at("14:50:29"), True))
+        self.assertEqual(followup.choose_attempt(published, records, keys, at("14:50:30"), True), keys[2])
+        self.assertEqual([due.time().isoformat() for due, _ in followup.schedule(at("14:47:00"), True)],
+                         ["14:48:00", "14:52:00", "14:53:00"])
+        # A buy alone in the 14:30 round, and a sell in any other round, keep 30, 120 and 300 seconds.
+        waiting = dict(etf=CODE, primary_sector="bank", status="WAIT_BUY", unit=100, rule=asdict(Rules()),
+                       book=new_book(Rules()), reduced=False,
+                       orders=[dict(id="buy", action="BUY", status="PENDING", requested_at=at("14:33:00").isoformat(),
+                                    eligible_at=at("14:33:00").isoformat(), remaining=None, target=None)])
+        late = dict(slot="14:30", at=at("14:33:00").isoformat(), report_id="report-1430", keys=keys)
+        self.old = market("14:30:09")
+        self.assertIsNone(self.perform("14:33:29", anchors=[late], cycles=[waiting])[0])
+        self.assertEqual(self.perform("14:33:30", anchors=[late], cycles=[waiting], fresh=market("14:33:28"))[0]["run_key"], keys[0])
+        early = dict(self.anchor, slot="14:05", at=at("14:08:00").isoformat(), keys=followup.run_keys(self.ledger.ns, DAY, "14:05"))
+        self.old = market("14:05:09")
+        self.assertEqual(self.perform("14:08:30", anchors=[early], cycles=[cycle("14:08:00")],
+                                      fresh=market("14:08:28"))[0]["run_key"], early["keys"][0])
+
     def test_http_disabled_skips_provider_budget_and_database(self):
         with patch.dict(os.environ, {"DISABLE_EXTERNAL_PROVIDER_HTTP": "true"}):
             result, provider, publish, budget, saved = self.perform()

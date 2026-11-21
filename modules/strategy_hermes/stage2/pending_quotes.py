@@ -1,7 +1,9 @@
-"""Bounded quote follow-up for published OCTOP rounds, on the existing worker.
+"""Bounded quote follow-up for OCTOP rounds, on the existing worker.
 
-This is an execution stage of a saved round, not another analysis clock. The
-request journal survives restart; every round has at most three provider calls.
+This is an execution stage of a round, not another analysis clock. The request
+journal survives restart; every round has at most three provider calls. A
+published round serves every executable pending order. A failed round has no
+report, so its three calls serve only sell orders that already exist.
 """
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -100,14 +102,24 @@ def read_state(ledger, day):
     from .worker import SLOTS
     with ledger._connect() as conn, conn.transaction():
         conn.execute("SET TRANSACTION READ ONLY")
-        anchor = conn.execute("""SELECT t.slot,e.at,t.report_id
-            FROM round_tasks t JOIN events e ON e.ns=t.ns AND e.kind='report' AND e.id=t.report_id
-            WHERE t.ns=%s AND t.trade_date=%s AND t.state='PUBLISHED' AND t.slot=ANY(%s::text[])
-            ORDER BY t.planned_at DESC LIMIT 1""", (ledger.ns, day, list(SLOTS))).fetchone()
-        if not anchor:
-            return None, [], {}
-        slot, published_at, report_id = anchor
-        keys = run_keys(ledger.ns, day, slot)
+        rounds = conn.execute("""SELECT t.slot,t.state,t.planned_at,e.at,t.report_id
+            FROM round_tasks t LEFT JOIN events e ON e.ns=t.ns AND e.kind='report' AND e.id=t.report_id
+            WHERE t.ns=%s AND t.trade_date=%s AND t.slot=ANY(%s::text[])
+              AND (t.state='FAILED' OR (t.state='PUBLISHED' AND e.id IS NOT NULL))
+            ORDER BY t.planned_at DESC""", (ledger.ns, day, list(SLOTS))).fetchall()
+        anchors = []
+        if rounds and rounds[0][1] == 'FAILED':
+            # The newest round failed: its own attempts, timed from its planned start, price sells only.
+            slot, _, planned, _, _ = rounds[0]
+            anchors.append(dict(slot=slot, at=planned.astimezone(CHINA).isoformat(), report_id=None,
+                                keys=run_keys(ledger.ns, day, slot), sells_only=True))
+        published = next((row for row in rounds if row[1] == 'PUBLISHED'), None)
+        if published:
+            anchors.append(dict(slot=published[0], at=published[3], report_id=published[4],
+                                keys=run_keys(ledger.ns, day, published[0])))
+        if not anchors:
+            return [], [], {}
+        keys = [key for anchor in anchors for key in anchor["keys"]]
         cycles = [document(row[0]) for row in conn.execute("""SELECT body FROM cycles
             WHERE ns=%s AND status IN ('WAIT_BUY','OPEN','WAIT_EXIT')""", (ledger.ns,))]
         states = read_states(conn, ledger.ns, [cycle['etf'] for cycle in cycles if cycle['status'] == 'WAIT_BUY'])
@@ -120,7 +132,7 @@ def read_state(ledger, day):
                 (keys, [SOURCE, OUTCOME])):
             records.setdefault(key, {})[source] = dict(status=status,
                 started_at=started.isoformat(), result=document(result) if result else None)
-    return dict(slot=slot, at=published_at, report_id=report_id, keys=keys), cycles, records
+    return anchors, cycles, records
 
 
 def save_outcome(ledger, key, result):
@@ -150,7 +162,7 @@ def merge_quotes(ledger, day, previous, tick):
 
 
 def tick(ledger, cache, key, days, config, *, paused=lambda: False, clock=lambda: datetime.now(CHINA)):
-    """Collect only for executable pending orders after an OCTOP-published round."""
+    """Collect only for executable pending orders after a published round, or sells after a failed one."""
     now = clock()
     calendar = Calendar(days)
     if ledger.origin != "LIVE" or not config or not provider_enabled() or paused() or not calendar.legal(now):
@@ -161,19 +173,25 @@ def tick(ledger, cache, key, days, config, *, paused=lambda: False, clock=lambda
                                  (ledger.ns + ":intraday-collector",)).fetchone()
         if not acquired:
             return None
-        anchor, cycles, records = read_state(ledger, day)
-        orders = eligible_orders(cycles, calendar, now)
-        if not anchor or not orders:
+        anchors, cycles, records = read_state(ledger, day)
+        every = eligible_orders(cycles, calendar, now)
+        if not anchors or not every:
             return None
         previous = shared_market(ledger, cache, key=key)
-        needed = missing_prices(orders, previous, calendar, now)
-        if not needed:
-            return None  # The caller consumes the shared sample on every tick.
-        run_key = choose_attempt(moment(anchor["at"]), records, anchor["keys"], now)
-        if run_key is None:
+        sells = {cycle["etf"] for cycle in cycles if (pending(cycle) or {}).get("action") in ("REDUCE", "EXIT")}
+        for anchor in anchors:
+            orders = {code: after for code, after in every.items() if code in sells} if anchor.get("sells_only") else every
+            needed = missing_prices(orders, previous, calendar, now) if orders else []
+            # The caller consumes the shared sample on every tick, so a covered order needs no request.
+            run_key = choose_attempt(moment(anchor["at"]), records, anchor["keys"], now) if needed else None
+            if run_key is not None:
+                break
+        else:
             return None
         result = dict(run_key=run_key, report_id=anchor["report_id"], slot=anchor["slot"],
                       needing_quote=needed, physical_requests=0)
+        if anchor.get("sells_only"):
+            result["failed_round"] = True
         budget = RequestLog(ledger, run_key)
 
         def collect():

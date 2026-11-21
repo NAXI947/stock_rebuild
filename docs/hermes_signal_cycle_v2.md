@@ -147,7 +147,7 @@ python -B -m unittest discover -s tests -q   # 全量，需按 README 先起 Pos
 
 ## 在途 v2 周期改按 v2.0.1
 
-2026-11-21 用户授权（`CLAUDE.md` 第 33 条）：`HOLD` 不再清零转弱计数的规则记为 `hermes_signal_cycle_v2_0_1`，
+2026-11-21 用户授权（`CLAUDE.md` 第 34 条）：`HOLD` 不再清零转弱计数的规则记为 `hermes_signal_cycle_v2_0_1`，
 执行服务器当时在途的 512800、512480、588100 三笔 v2 周期一并改按它管理。`tools/migrate_cycles_to_exit_v2_0_1.py`
 只处理命令行点名、且周期编号在工具内 `AUTHORISED` 名单里的这三笔；不带 `--apply` 时只读。
 
@@ -162,3 +162,21 @@ docker exec -i stock-v4-backend python - --etf 512800.SH [--apply] < tools/migra
   `rule_change` 保留时刻、原版本和原计数。成交、订单、现金、持仓和退出计划不变，工具不生成卖单。
 * 输出的 `next_weak_report_exits` 为真时，下一份 `WEAK` 报告会触发 `AI_WEAK_CROSS_DAY_2` 全清，写入前先看这一项。
 * 发布时把 `MODEL_EVALUATION_RULE` 改为 `v2.0.1`，新开的周期才按新规则冻结。
+
+## 观测数据（只读，不参与决策）
+
+* 建仓元数据：LIVE 买单成交时，周期里多存一项 `entry`，含 `entry_market_regime`（与退出计划冻结的档位相同，
+  回退为震荡档时为空）、`entry_round_slot`、`entry_up_streak`（主板块到入场报告为止连续为 `UP` 的已保存报告数，
+  最多回看 10 份）、`entry_market_breadth_ratio`（入场报告的上涨板块数 ÷ 涨、跌、平板块数之和）。
+  全部取自已保存的报告；取不到的保持为空。引擎、订单和退出计划都不读这一项。迁移来的周期没有这一项。
+* 收盘后统计：`tools/exit_observation.py` 只读已保存的周期、报价、ETF 日线批次和 107 指数批次，不采集、不写入。
+
+```bash
+python -B -m tools.exit_observation --env-file /absolute/.env --since 2026-11-16
+docker exec -i stock-v4-backend python - --since 2026-11-16 < tools/exit_observation.py
+```
+
+  输出三部分：`entries`（每笔建仓的规则版本、回退标记和建仓元数据，汇总 `atr_unavailable`、`regime_fallback_range`）；
+  `late_round_gaps`（每笔持仓每个交易日：当日最后一条采样报价之后，收盘价是否越过止损、保本、移动止盈或目标止盈线，
+  以及次日第一条采样报价相对收盘的缺口）；`index_bars`（每个交易日的 107 指数日线是否在下一个交易日开盘前落库，
+  分 DUAL 和 SINGLE）。日线没有落库的交易日记为 `CLOSE_NOT_STORED`，不推算。

@@ -1,4 +1,4 @@
-"""One-off: put named open v2 cycles under hermes_signal_cycle_v2_0_1 (owner authorisation 2026-11-21, CLAUDE.md rule 33).
+"""One-off: put named open v2 cycles under hermes_signal_cycle_v2_0_1 (owner authorisation 2026-11-21, CLAUDE.md rule 34).
 
 v2.0.1 differs from v2 in one point: a HOLD report no longer clears the weak trading days, only UP does. Each named
 cycle gets the v2.0.1 rule snapshot and the weak trading days its stored reports give under that rule. Nothing is

@@ -228,7 +228,9 @@ AI 对每个板块提交恰好一项。数值、中文摘要和 QQ 正文都由�
    没进发现结果的板块当轮不可能「新增」。
 9. **穿透覆盖有缺口。** 1469 只 ETF 里 1297 只缺指数权重，AI 的可选池只来自有权重或有显式关系的那一部分；
    现有权重日期是 2026-10-30。
-10. **QQ 简报是程序排版的。** 栏目顺序在 `qq-brief.md`，数字由程序按 `fact_refs` 渲染；
+10. **QQ 简报是程序排版的。** 五轮报告用的模板是 `deploy/qq-templates/research.txt`（`qq-template-v2`，
+    源文件 `modules/strategy_hermes/qq_templates/research.txt`）；skill 目录里的 `qq-brief.md` 是旧格式
+    `octop-markdown-v1` 的模板，11/16 之后的报告不再使用。数字由程序按 `fact_refs` 渲染；
     AI 能影响的只有方向、引用了哪些事实、选了哪些 ETF 和定性理由。
 
 ## 8. 执行服务器当前状态（2026-11-21）

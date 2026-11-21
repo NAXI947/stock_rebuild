@@ -145,6 +145,10 @@ class Ledger:
         """Market regime and ATR20 known when a buy fills; none here, so both fall back."""
         return {}
 
+    def _entry_observation(self,db,ns,cycle):
+        """Read-only facts of the entry round for later study; none here."""
+        return None
+
     @staticmethod
     def _save(db,ns,cid,cycle,opened):
         db.execute("""INSERT INTO cycles VALUES (?,?,?,?,?,?)
@@ -198,8 +202,14 @@ class Ledger:
             db.execute("""INSERT INTO latest VALUES (?,?,?)
                 ON CONFLICT(ns,etf) DO UPDATE SET quote=excluded.quote""",(ns,code,encode(quote)))
             if code in active:
-                process_quote(active[code][1],quote,calendar,
+                cycle=active[code][1]
+                waiting=cycle["status"]=="WAIT_BUY"
+                process_quote(cycle,quote,calendar,
                               lambda at,frozen,code=code:self._exit_inputs(db,code,at,calendar,frozen))
+                if waiting and "exit_plan" in cycle:
+                    entry=self._entry_observation(db,ns,cycle)
+                    if entry is not None:
+                        cycle["entry"]=entry
         for cid,cycle,opened in active.values():
             self._save(db,ns,cid,cycle,opened)
 

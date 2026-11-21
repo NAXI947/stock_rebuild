@@ -18,9 +18,15 @@ GitHub 的验收构建在提交到 main 后运行测试并发布镜像。手动�
 
 ```bash
 cd /opt/1panel/apps/local/stock-system
-bash deploy/release.sh check /absolute/path/release.env
-bash deploy/release.sh apply /absolute/path/release.env
+bash deploy/release.sh check /absolute/path/release.env --automation /opt/1panel/apps/local/stock-system/deploy/approved/NAME-automation.env
+bash deploy/release.sh apply /absolute/path/release.env --automation /opt/1panel/apps/local/stock-system/deploy/approved/NAME-automation.env
 ```
+
+已启用自动研判的主机，每次 check 和 apply 都要带 `--automation` 和设置文件的绝对路径，指向最近一次批准的那份。不带时不合并
+`docker-compose.automation.yml`：五轮研判、行情采集、QQ、个股研究和 IOPV 全部按关闭启动，触发模式回到 `internal`，
+`ETF_REPRESENTATIVENESS_MODE` 回到 `V2`，而健康检查仍然通过。发布后核对 worker 的 `ENABLE_HERMES_SCHEDULE`、
+`ENABLE_OFFICIAL_COLLECTION`、`ENABLE_QQ_PUSH`、`HERMES_TRIGGER_MODE` 和 `ETF_REPRESENTATIVENESS_MODE`，
+以及 `.stock-v4-releases/<发布编号>/` 下存在 `automation.env`。设置项见 [自动研判部署](AUTOMATION.md)。
 
 check 校验清单、令牌文件、交易日历权限、目录、Docker 网络及 Compose 配置。首次 apply 接受既有 .release.env 的默认占位内容，同时检查是否已有同名容器或 Compose 项目。成功发布后，脚本使用 .stock-v4-releases 下的发布清单和对应 Compose 快照作为应用版本记录。
 

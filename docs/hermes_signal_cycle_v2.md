@@ -65,6 +65,10 @@
 
 ## 配置
 
+执行服务器自 2026-11-21 起为 `MODEL_EVALUATION_RULE=hermes_signal_cycle_v2`、`REGIME_MODE=DUAL`（`ETFv2.0`）。
+这两项在生产 `.env` 里；自动化开关和代表性模式由发布时的 `--automation` 设置文件决定，见 `deploy/README.md`。
+从研判到买卖的完整链路见 [Hermes 研判到买卖链路](hermes-研判到买卖链路.md)。
+
 | 配置 | 取值 |
 |---|---|
 | `MODEL_EVALUATION_RULE` | `hermes_signal_cycle_v1`（未设置时的默认）或 `hermes_signal_cycle_v2`；其他值启动失败 |

@@ -835,7 +835,7 @@ function sectorEtfPenetration(data) {
   for(const [label,value,of,note] of [
     ["当前穿透 ETF",current.report_id?current.matched:null,"可入场 "+panoramaCount(current.entry)+" · 仅观察 "+panoramaCount(current.observe)+" · 资料不可用 "+panoramaCount(current.rejected),current.report_at?"最新报告 "+time(current.report_at).slice(0,16)+" · "+panoramaCount(current.sectors)+" 个板块":"暂无已保存报告"],
     ["完整穿透 ETF",mapping?.reachable,"目录 "+panoramaCount(mapping?.catalog)+" 只 · "+panoramaCount(mapping?.sectors)+" 个板块",mapping?"映射更新 "+time(mapping.available_at).slice(0,16):"暂无已发布映射"],
-    ["近期新增穿透 ETF",mapping?data.recent_etf_count:null,recent.length?"来自 "+recent.length+" 次映射更新":"近期各版本无新增",data?.recent_since?"自 "+time(data.recent_since).slice(0,16)+" 起":"没有可比较的旧版本"],
+    ["近期新增穿透 ETF",mapping?data.recent_etf_count:null,data?.recent_etf_count?"来自 "+recent.filter(row=>row.etf_count).length+" 次映射更新":"近期各版本无新增",data?.recent_since?"自 "+time(data.recent_since).slice(0,16)+" 起":"没有可比较的旧版本"],
     ["缺指数权重 ETF",mapping?gaps.etf_count:null,"涉及 "+panoramaCount(gaps.index_count)+" 个指数",mapping?.weight_dates?.length?"现有权重日期 "+mapping.weight_dates.join("、"):"暂无可用权重"]]){
     const item=elt("div",undefined,"sector-etf-figure");
     item.append(elt("span",label,"muted"),elt("strong",panoramaCount(value),"metric"),elt("span",of),elt("span",note,"muted"));grid.append(item);

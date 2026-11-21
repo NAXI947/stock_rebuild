@@ -54,16 +54,64 @@ input[type=file] { padding: 8px; max-width: 100% }
 .backtest-rules { margin-bottom: 20px; border: 1px solid #bcd6d2; border-top: 3px solid var(--brand); border-radius: var(--card); background: var(--paper); overflow: hidden }
 .backtest-rules-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding: 18px 20px 0 }
 .backtest-rules-heading h2 { font-size: 17px; line-height: 1.5 }
-.backtest-rules-intro { padding: 4px 20px 16px; color: var(--muted); font-size: 13px }
-.backtest-rules-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,260px),1fr)); gap: 20px; padding: 0 20px 20px }
-.backtest-rule { min-width: 0 }
-.backtest-rule h3 { display: flex; align-items: center; gap: 8px; font-size: 15px }
+.backtest-rules-intro { padding: 4px 20px 14px; color: var(--muted); font-size: 13px }
 .backtest-rule-number { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: var(--brand-light); color: var(--brand-dark); font: 600 12px var(--mono) }
-.backtest-rule-trigger { margin: 10px 0 8px; color: var(--brand-dark); font-weight: 650; font-size: 14px }
-.backtest-rule ul { margin: 0; padding-left: 17px; color: var(--ink); font-size: 13px; line-height: 1.8 }
-.backtest-rule li + li { margin-top: 6px }
-.backtest-rule li::marker { color: var(--muted) }
-.backtest-rules-foot { padding: 12px 20px; border-top: 1px solid var(--line); background: var(--background); color: var(--muted); font-size: 12px; line-height: 1.8 }
+.flow-section { padding: 0 20px; border-top: 1px solid var(--line); container: flow / inline-size }
+.flow-section[open] { padding-bottom: 20px }
+.flow-section > summary { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 14px; min-height: 52px; padding: 10px 0; list-style: none }
+.flow-section > summary::-webkit-details-marker { display: none }
+.flow-section > summary::after { content: "展开 ▾"; margin-left: auto; color: var(--brand-dark); font-size: 12px; font-weight: 550; white-space: nowrap }
+.flow-section[open] > summary::after { content: "收起 ▴" }
+.flow-section h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px }
+.flow-gist { flex: 1 1 260px; min-width: 0; color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.6 }
+.flow-section[open] .flow-gist { display: none }
+.flow-chain { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0,1fr); grid-template-rows: auto auto; column-gap: 26px; margin: 0; padding: 0; list-style: none }
+.flow-step { display: grid; grid-row: span 2; grid-template-rows: subgrid; row-gap: 6px; min-width: 0 }
+.flow-node { position: relative; display: grid; align-content: start; gap: 4px; padding: 10px 12px; border: 1px solid #bcd6d2; border-radius: var(--control); background: var(--brand-light); font-size: 12px; line-height: 1.6 }
+.flow-split { display: grid; gap: 6px; min-width: 0 }
+.flow-node strong { color: var(--brand-dark); font-size: 14px }
+.flow-step + .flow-step .flow-node::before, .flow-branch::before, .flow-fork + .flow-chain::before { position: absolute; color: var(--muted); font: 600 15px/1 var(--mono) }
+.flow-step + .flow-step .flow-node::before { content: "→"; left: -21px; top: calc(50% - 8px) }
+.flow-drop { align-self: start; margin: 0; padding-left: 10px; border-left: 2px dashed #d9c9a3; color: var(--muted); font-size: 12px; line-height: 1.6 }
+.flow-drop b { margin-right: 6px; color: var(--warm); font-weight: 650 }
+.flow-fork { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,340px),1fr)); gap: 28px 16px; margin-top: 28px }
+.flow-branch { position: relative; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--control); background: var(--background) }
+.flow-branch::before { content: "↓"; top: -21px; left: calc(50% - 5px) }
+/* Below two 340px columns the branches stack; they are still evaluated side by side, not in sequence. */
+@container flow (max-width: 695px) { .flow-branch + .flow-branch::before { content: "同时"; left: 14px; top: -20px; font: 600 12px/1 var(--sans, inherit) } }
+.flow-branch h4 { margin: 0; font-size: 14px }
+.flow-branch-context { margin: 2px 0 8px; color: var(--muted); font-size: 12px }
+.flow-rules { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; counter-reset: flow-rule }
+.flow-rule { display: grid; grid-template-columns: 22px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--control); background: var(--paper); counter-increment: flow-rule }
+.flow-rule::before { content: counter(flow-rule); display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--brand-light); color: var(--brand-dark); font: 600 12px var(--mono) }
+.flow-rule-condition { display: grid; min-width: 0; font-size: 12px; line-height: 1.6 }
+.flow-rule-condition strong { font-size: 13px }
+.flow-rule-condition span { color: var(--muted) }
+.flow-action { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 650; white-space: nowrap }
+.flow-action::before { content: "→"; font-family: var(--mono); font-weight: 600 }
+.flow-action-exit { background: #fdecea; color: var(--up) }
+.flow-action-reduce { background: #fbf1dd; color: var(--warm) }
+.flow-action-hold { background: var(--brand-light); color: var(--brand-dark) }
+.flow-fork + .flow-chain { position: relative; margin-top: 28px }
+.flow-fork + .flow-chain::before { content: "↓"; top: -21px; left: 24px }
+.flow-table-wrap { margin-top: 16px; overflow-x: auto }
+.flow-table { width: 100%; min-width: 660px; border-collapse: collapse; font-size: 12px; line-height: 1.6 }
+.flow-table th, .flow-table td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top }
+.flow-table thead th { background: var(--background); font-size: 13px }
+.flow-table tbody th { color: var(--muted); font-weight: 600; white-space: nowrap }
+@media (max-width: 1240px) {
+  .flow-chain { grid-auto-flow: row; grid-template-rows: none; grid-template-columns: minmax(0,1fr); row-gap: 26px }
+  .flow-step { grid-row: auto; grid-template-rows: none; grid-template-columns: minmax(0,3fr) minmax(0,2fr); column-gap: 12px; align-items: center }
+  .flow-step > :only-child { grid-column: 1 / -1 }
+  .flow-split { grid-template-columns: repeat(2,minmax(0,1fr)); column-gap: 12px }
+  .flow-step + .flow-step .flow-node::before { content: "↓"; left: 24px; top: -21px }
+}
+@media (max-width: 600px) {
+  .flow-step { grid-template-columns: minmax(0,1fr) }
+  .flow-rule { grid-template-columns: 22px minmax(0,1fr) }
+  .flow-action { grid-column: 2; justify-self: start }
+}
+.backtest-rules-foot { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--control); background: var(--background); color: var(--muted); font-size: 12px; line-height: 1.8 }
 .backtest-rules-foot p + p { margin-top: 4px }
 .backtest-rules-foot strong { margin-right: 10px; color: var(--ink); font-weight: 650 }
 .login-panel { margin-top: min(16vh,120px); max-width: 420px; padding: 26px; border: 1px solid var(--line); border-radius: var(--card); background: var(--paper) }
@@ -83,6 +131,58 @@ tr:last-child td { border-bottom: 0 }
 progress { width: 100%; height: 12px; accent-color: var(--brand) }
 .up { color: var(--up) }
 .down { color: var(--down) }
+.round-card { container: rounds / inline-size }
+.round-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 4px 0 10px }
+.round-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px }
+.round-legend .rm-key { color: var(--muted) }
+.round-switches { margin: 0 }
+.round-switches button { min-height: 36px; padding: 4px 10px; font-size: 12px }
+.round-matrix { table-layout: fixed; min-width: 520px }
+.round-matrix th, .round-matrix td { padding: 6px 4px; text-align: center; vertical-align: middle }
+.round-matrix thead th { font-size: 13px }
+.round-matrix thead th > * { display: block; margin-inline: auto }
+.round-matrix thead th > .muted { font-weight: 400; line-height: 32px }
+.round-matrix th:first-child { position: sticky; left: 0; z-index: 1; width: 104px; padding-left: 0; background: var(--paper); color: var(--ink); font-size: 13px; text-align: left; white-space: normal; overflow-wrap: anywhere }
+.round-matrix tbody tr:hover > * { background: var(--background) }
+.rm-open { min-height: 32px; padding: 2px 8px; color: var(--brand-dark); font-size: 12px; white-space: nowrap }
+.rm-cell { display: grid; justify-items: center; gap: 2px }
+.rm-chip { display: inline-flex; align-items: center; gap: 3px; min-height: 24px; padding: 1px 7px; border: 1px solid transparent; border-radius: 6px; font-size: 12px; font-weight: 600; line-height: 1.5; white-space: nowrap }
+.rm-sign { font: 600 11px/1 var(--mono) }
+.rm-count { font-size: 12px }
+.rm-change { font-size: 11px; white-space: nowrap }
+.rm-new { border-color: #a34a05; background: #a34a05; color: #fff }
+.rm-strengthen { border-color: #f1bdb7; background: #fdecea; color: var(--up) }
+.rm-maintain { border-color: #cbd7e0; background: #edf2f6; color: #3d5566 }
+.rm-weaken { border-color: #b3dbc5; background: #e6f4ec; color: var(--down) }
+.rm-retreat { border-color: #9aa5ad; background: #e3e7ea; color: #47535c; text-decoration: line-through; text-decoration-color: #47535c80 }
+.rm-held { color: var(--muted) }
+.rm-carried { border-style: dashed; border-color: currentColor; background: transparent }
+.rm-idle, .rm-wait { color: #7b8a94; font-weight: 400 }
+.rm-idle-row th:first-child { color: #7b8a94; font-weight: 400 }
+.dir-groups { display: grid; grid-template-columns: max-content 1fr; align-items: start; gap: 10px 12px; margin: 0 }
+.dir-groups dt { justify-self: start; margin-top: 2px }
+.dir-groups dd { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; margin: 0 }
+.dir-item { display: inline-flex; align-items: baseline; gap: 6px; min-height: 28px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; line-height: 1.5 }
+.dir-name { color: var(--ink); font-weight: 600; overflow-wrap: anywhere }
+.dir-state { font-size: 12px; font-weight: 600; white-space: nowrap }
+.dir-strengthen .dir-state { color: var(--up) }
+.dir-new .dir-state { color: #a34a05 }
+.dir-maintain .dir-state { color: #3d5566 }
+.dir-weaken .dir-state { color: var(--down) }
+.dir-held .dir-state { color: var(--muted) }
+.dir-strengthen.dir-run { border-color: #f1bdb7; background: #fdecea }
+.dir-maintain.dir-run { border-color: #cbd7e0; background: #edf2f6 }
+.dir-weaken.dir-run { border-color: #b3dbc5; background: #e6f4ec }
+@container rounds (max-width: 560px) {
+  .round-matrix { min-width: 0 }
+  .round-matrix th, .round-matrix td { padding-inline: 1px }
+  .round-matrix th:first-child { width: 68px; font-size: 12px }
+  .round-matrix .rm-word { display: none }
+  .rm-chip { padding: 1px 5px }
+  .rm-new, .rm-retreat { gap: 2px; padding-inline: 3px }
+  .rm-open { padding-inline: 6px }
+  .rm-change { font-size: 10px; letter-spacing: -0.2px }
+}
 .slot { display: grid; gap: 4px; border-bottom: 1px solid var(--line); padding: 9px 0 }
 .slot:last-child { border-bottom: 0 }
 .slot button { justify-self: start }

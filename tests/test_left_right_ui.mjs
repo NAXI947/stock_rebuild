@@ -48,6 +48,32 @@ const row=(code="000001.SZ",score="80")=>({ts_code:code,name:code==="000001.SZ"?
 const info=(items=[row()])=>({items,available_dates:["2026-11-17"],selected_trade_date:"2026-11-17",family:"RIGHT",page:1,page_size:20,pages:1,total:items.length,summary:{total:items.length,valid_score_count:items.length,max_score:"80",valid_return_count:1,up_count:1,high_return_count:0},batch:{version_id:"right-v1",published_at:"2026-11-17T16:00:00+08:00"}});
 const days=["2026-11-10","2026-11-11","2026-11-12","2026-11-13","2026-11-16","2026-11-17"];
 
+test("backtest rules draw the screening and exit topology from the served rule snapshot",()=>{
+  const {context,calls}=harness(()=>{throw new Error("the rule notice must not request data");});
+  const row=(multiple,days)=>({stop_loss:[multiple,"0.011","0.022"],trail_start:["0.41","0.021","0.031"],
+    trail_drawdown:["0.36","0.013","0.023"],target_reduce:["0.71","0.026","0.036"],
+    stagnant_days:days,stagnant_return:"0.012",max_days:days+7});
+  const v2={version:"hermes_signal_cycle_v2",reduce_ratio:"0.50",regime_mode:"DUAL",time_exit_enabled:true,
+    bear_early_weak_exit:false,weak_exit_trade_days:4,breakeven_arm_return:"0.017",breakeven_buffer:"1.007",
+    regime_bull_volume_ratio:"1.13",regime_bear_volume_ratio:"0.87",
+    exit_table:{BEAR_DEFENSE:row("0.7",2),RANGE_ROTATION:row("0.8",3),BULL_OFFENSE:row("0.95",4)}};
+  const notice=context.backtestRulesNotice(v2),text=notice.textContent,sections=walk(notice,node=>node.tagName==="details");
+  assert.deepEqual(sections.map(node=>node.open),[false,false,false]);
+  sections[1].open=true;sections[1].dispatch("toggle");
+  assert.deepEqual(walk(context.backtestRulesNotice(v2),node=>node.tagName==="details").map(node=>node.open),[false,true,false]);
+  for (const part of ["新周期规则 hermes_signal_cycle_v2","筛选逻辑","交易逻辑","成员不少于 300 只","沪深300 + 中证1000",
+    "0.7 × ATR20，限 1.1%–2.2%","0.95 × ATR20，限 1.1%–2.2%","0.71 × ATR20，限 2.6%–3.6%","T+2 起浮盈低于 +1.2%","T+11",
+    "峰值浮盈到过 +1.7%","成本 × 1.007","跨交易日第 4 次转弱","量能比 ≥ 1.13","量能比 ≤ 0.87","减50%，并启用保本",
+    "到期退出","轮次失败时也为卖单补价"]) assert.ok(text.includes(part),part);
+  assert.ok(!text.includes("弱势档早衰"));
+  assert.ok(!context.backtestRulesNotice({...v2,time_exit_enabled:false}).textContent.includes("到期退出"));
+  assert.ok(context.backtestRulesNotice({...v2,bear_early_weak_exit:true,regime_mode:"SINGLE"}).textContent.includes("弱势档早衰"));
+  const v1=context.backtestRulesNotice({version:"hermes_signal_cycle_v1",reduce_ratio:"0.50"}).textContent;
+  for (const part of ["新周期规则 hermes_signal_cycle_v1","首次转弱","明确退潮","没有按价格或持有天数的退出"]) assert.ok(v1.includes(part),part);
+  for (const part of ["成本止损","移动止盈","ATR20 ×","各线取值"]) assert.ok(!v1.includes(part),part);
+  assert.equal(calls.length,0);
+});
+
 test("ETF report renders the five saved counting dimensions and their selectable tiers",()=>{
   const {context,calls,root}=harness(()=>{throw new Error("saved report must not recollect data");});
   const fixtures=[
@@ -198,4 +224,114 @@ test("history result arriving after dialog close does not update it",async()=>{
   const pending=deferred(),{context,root}=harness(()=>pending.promise),dialog=context.showLrDetail(row(),root);
   dialog.close();pending.resolve({trade_dates:days,items:[],bars:[]});await settle();
   assert.equal(css(dialog,"lr-history").length,0);
+});
+
+const roundSlots=["09:35","10:35","13:05","14:05","14:30"];
+const roundCellOf=(fields={})=>({active:true,phase:"WEAKEN",streak:1,covered:true,was_active:true,judged:"WEAKEN",advanced:"WEAKEN",
+  skipped:null,reasons:["板块涨跌 -1.23%"],change:"-0.0123",...fields});
+const outsideCell=(fields={})=>roundCellOf({active:false,phase:null,streak:0,was_active:false,advanced:null,...fields});
+function overview(extra={}) {
+  const report=slot=>({id:"report-"+slot,at:"2026-11-20T"+slot+":40+08:00",status:"PARTIAL",slot,summary:slot+" 的原文摘要"});
+  return {slots:roundSlots,reports:["14:05","13:05","10:35","09:35"].map(report),rotation:{},rotation_window:[],cycles:[],
+    evaluation:{open_or_pending:0},market:null,round_sectors:[
+      {id:"kaipanla:1",name:"连续",rounds:{"09:35":roundCellOf({streak:2}),"10:35":roundCellOf({streak:3}),
+        "13:05":roundCellOf({phase:"MAINTAIN",judged:"MAINTAIN",advanced:"MAINTAIN",change:"0.004"}),
+        "14:05":roundCellOf({phase:"STRENGTHEN",judged:"STRENGTHEN",advanced:"STRENGTHEN",streak:5,change:null})}},
+      {id:"kaipanla:2",name:"入场后离场",rounds:{"09:35":outsideCell({covered:false,judged:null,reasons:[],change:null}),
+        "10:35":roundCellOf({phase:"NEW",judged:"NEW",advanced:"NEW",streak:0,was_active:false}),
+        "13:05":roundCellOf({active:false,phase:null,streak:0,judged:"RETREAT",advanced:"RETREAT"}),
+        "14:05":outsideCell({judged:"WEAKEN",skipped:"NO_ACTIVE_DIRECTION"})}},
+      {id:"kaipanla:3",name:"沿用",rounds:{"09:35":roundCellOf({streak:4}),
+        "10:35":roundCellOf({streak:4,judged:"UNKNOWN",advanced:null}),
+        "13:05":roundCellOf({streak:4,advanced:null,skipped:"DUPLICATE_EVIDENCE"}),
+        "14:05":roundCellOf({streak:4,covered:false,judged:null,advanced:null,reasons:[],change:null})}},
+      {id:"kaipanla:4",name:null,rounds:{"09:35":outsideCell({judged:"MAINTAIN",skipped:"NO_ACTIVE_DIRECTION"})}},
+    ],...extra};
+}
+function openOverview(view) {
+  const page=harness(url=>url.includes("/report?")?{id:"report-10:35",at:"2026-11-20T10:35:40+08:00",status:"PARTIAL",sectors:[]}:{items:[]});
+  page.context.overviewFixture=view;
+  vm.runInContext("state.page='overview';state.view=overviewFixture;roundsUI.source=false;roundsUI.idle=false;renderOverview()",page.context);
+  const card=()=>css(page.root,"round-card")[0];
+  const grid=()=>Object.fromEntries(css(card(),"round-matrix")[0].tBodies[0].rows.map(row=>[row.children[0].textContent,
+    row.children.slice(1).map(cell=>cell.children[0])]));
+  return {...page,card,grid,heads:()=>css(card(),"round-matrix")[0].children[0].rows[0].children};
+}
+
+test("five-round card lays sectors against rounds with entry, streaks, exit and carried state",()=>{
+  const {card,grid,heads}=openOverview(overview());
+  assert.deepEqual(heads().map(th=>th.textContent),["板块","09:35查看报告","10:35查看报告","13:05查看报告","14:05查看报告","14:30待报告"]);
+  const rows=grid(), text=name=>rows[name].map(cell=>cell.textContent), kinds=name=>rows[name].map(cell=>cell.children[0]?.className ?? cell.className);
+  // Sectors that never were an active direction today stay folded away until asked for.
+  assert.deepEqual(Object.keys(rows),["连续","沿用","入场后离场"]);
+  assert.deepEqual(text("连续"),["▼减弱×2-1.23%","▼减弱×3-1.23%","—维持+0.40%","▲加强×5","·"]);
+  assert.deepEqual(kinds("连续"),["rm-chip rm-weaken","rm-chip rm-weaken","rm-chip rm-maintain","rm-chip rm-strengthen","rm-wait"]);
+  assert.deepEqual(text("入场后离场"),["·","＋新增-1.23%","✕退潮-1.23%","减弱","·"]);
+  assert.deepEqual(kinds("入场后离场").slice(0,4),["rm-chip rm-idle","rm-chip rm-new","rm-chip rm-retreat","rm-chip rm-idle"]);
+  assert.deepEqual(text("沿用"),["▼减弱×4-1.23%","=▼减弱×4-1.23%","=▼减弱×4-1.23%","=▼减弱×4","·"]);
+  assert.deepEqual(kinds("沿用").slice(1,4),Array(3).fill("rm-chip rm-weaken rm-carried"));
+  assert.equal(rows["沿用"][1].title,"沿用 · 10:35\n状态沿用：减弱×4\nAI 本轮判断：待确认\n板块涨跌 -1.23%");
+  assert.match(rows["沿用"][2].title,/证据与上一轮相同，状态沿用/);
+  assert.match(rows["沿用"][3].title,/本轮报告未覆盖该板块/);
+  assert.match(rows["入场后离场"][2].title,/本轮退潮，退出活动方向/);
+  assert.match(rows["入场后离场"][3].title,/不在活动方向内[\s\S]*未判新增不入场/);
+  assert.equal(css(card(),"slot").length,0);
+});
+
+test("active directions are grouped by phase with sector names and the longest streak first",()=>{
+  const member=(phase,streak,label,name)=>({phase,streak,label,name,member:true,report_id:"report-"+phase+streak});
+  const {root}=openOverview(overview({rotation:{
+    "kaipanla:11":member("WEAKEN",1,"减弱","甲"),"kaipanla:12":member("WEAKEN",5,"减弱×5","乙"),
+    "kaipanla:13":member("MAINTAIN",2,"维持×2","丙"),"kaipanla:14":member("NEW",0,"新增","丁"),
+    "kaipanla:15":member("WEAKEN",3,"减弱×3",null)}}));
+  const groups=css(root,"dir-groups")[0].children, lines={};
+  for (let i=0;i<groups.length;i+=2) lines[groups[i].textContent]=groups[i+1].children.map(item=>item.textContent);
+  assert.deepEqual(lines,{"▲加强0":["无"],"＋新增1":["丁新增"],"—维持1":["丙维持×2"],"▼减弱3":["乙减弱×5","kaipanla:15减弱×3","甲减弱"]});
+  assert.deepEqual(groups.filter((_,i)=>i%2===0).map(head=>head.className),
+    ["rm-chip rm-strengthen","rm-chip rm-new","rm-chip rm-maintain","rm-chip rm-weaken"]);
+  const [named,unnamed]=groups[7].children;
+  assert.equal(named.className,"dir-item dir-weaken dir-run");
+  assert.equal(groups[7].children[2].className,"dir-item dir-weaken");
+  assert.equal(named.title,"kaipanla:12\n最近一次变动的报告 report-WEAKEN5");
+  assert.match(unnamed.title,/^未取得板块名称/);
+  assert.equal(css(openOverview(overview()).root,"dir-groups").length,0);
+  assert.ok(openOverview(overview()).root.textContent.includes("当前暂无已确认的活动方向"));
+});
+
+test("five-round card unfolds idle sectors, falls back to the source text and still opens a report",async()=>{
+  const {card,grid,heads,calls,root}=openOverview(overview());
+  const idle=button(card(),"非活动板块 1");
+  assert.equal(idle.attributes["aria-pressed"],"false");
+  await idle.dispatch("click");
+  assert.deepEqual(Object.keys(grid()).at(-1),"kaipanla:4");
+  assert.equal(grid()["kaipanla:4"][0].textContent,"维持");
+  assert.equal(button(card(),"非活动板块 1").attributes["aria-pressed"],"true");
+  await heads()[2].children[1].dispatch("click");
+  await settle();
+  assert.ok(calls.some(call=>call.url.endsWith("/report?id=report-10%3A35")));
+  await button(card(),"看原文").dispatch("click");
+  assert.equal(css(card(),"round-matrix").length,0);
+  assert.deepEqual(css(card(),"slot").map(row=>row.textContent),["09:3509:35 的原文摘要查看报告","10:3510:35 的原文摘要查看报告",
+    "13:0513:05 的原文摘要查看报告","14:0514:05 的原文摘要查看报告","14:30待报告"]);
+  await button(card(),"看原文").dispatch("click");
+  assert.equal(css(card(),"round-matrix").length,1);
+  assert.ok(root.textContent.includes("活动轮动方向"));
+});
+
+test("five-round card tolerates a day without reports, missing fields and a failed round",()=>{
+  const empty=openOverview(overview({reports:[],round_sectors:undefined}));
+  assert.deepEqual(empty.heads().slice(1).map(th=>th.textContent),roundSlots.map(slot=>slot+"待报告"));
+  assert.ok(empty.card().textContent.includes("暂无已落库的板块判断"));
+  const sparse=openOverview(overview({rotation_window:[{trade_date:"2026-11-20",slot:"14:30",status:"FAILED"}],
+    round_sectors:[{id:"kaipanla:9",rounds:{"09:35":{active:true,was_active:true,covered:true}}},{id:"kaipanla:8"}]}));
+  assert.notEqual(sparse.heads()[5].textContent,"14:30待报告");
+  assert.deepEqual(sparse.grid()["kaipanla:9"].map(cell=>cell.textContent),["=沿用","·","·","·","·"]);
+  assert.equal(button(sparse.card(),"非活动板块 1").textContent,"非活动板块 1");
+  // A retreat whose earlier membership lies before the loaded reports is still an exit worth showing.
+  const edge=openOverview(overview({round_sectors:[{id:"kaipanla:7",name:"窗口外退潮",rounds:{
+    "09:35":roundCellOf({active:false,phase:null,streak:0,was_active:null,judged:"RETREAT",advanced:"RETREAT"}),
+    "10:35":outsideCell({judged:"RETREAT",advanced:"RETREAT"})}}]}));
+  assert.deepEqual(edge.grid()["窗口外退潮"].slice(0,2).map(cell=>cell.textContent),["✕退潮-1.23%","退潮"]);
+  assert.match(edge.grid()["窗口外退潮"][0].title,/超出已加载的报告范围/);
+  assert.equal(button(edge.card(),"非活动板块 1"),undefined);
 });

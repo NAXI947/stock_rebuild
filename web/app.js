@@ -193,6 +193,155 @@ async function navigate(page) {
   else if (page==="hot-sectors") await renderHotSectors();
   else if (await refresh() && state.page===page) page==="overview"?renderOverview():await renderMarket();
 }
+const roundMarks = {NEW:["＋","新增"],STRENGTHEN:["▲","加强"],MAINTAIN:["—","维持"],WEAKEN:["▼","减弱"],
+  RETREAT:["✕","退潮"],UNKNOWN:["?","待确认"]};
+const roundSkips = {DUPLICATE_EVIDENCE:"证据与上一轮相同，状态沿用",NO_ACTIVE_DIRECTION:"不在活动方向内，未判新增不入场",
+  ALREADY_IN_CHAIN:"已在活动方向内，再判新增不重复入场",COINCIDENT_REPORT_SUPERSEDED:"同一时刻另一份报告的判断已生效"};
+// View switches of the five-round card; the page rebuilds it on every refresh.
+const roundsUI = {source:false, idle:false};
+
+// How one sector stands after one round: entered, counted, left, carried over, or outside the active directions.
+function roundCell(cell) {
+  if (!cell) return null;
+  const mark=phase=>roundMarks[phase] || [];
+  const counted=phase=>({kind:phase.toLowerCase(),mark:mark(phase),count:cell.streak>1 ? cell.streak : 0});
+  if (cell.advanced==="NEW") return {kind:"new",mark:mark("NEW"),count:0};
+  if (cell.advanced==="RETREAT" && cell.was_active!==false) return {kind:"retreat",mark:mark("RETREAT"),count:0};
+  if (cell.advanced && cell.advanced!=="RETREAT") return counted(cell.advanced);
+  if (cell.active) return {...(cell.phase ? counted(cell.phase) : {kind:"held",mark:["","沿用"],count:0}),carried:true};
+  return {kind:"idle",mark:cell.covered ? ["",mark(cell.judged)[1] || "待确认"] : ["","·"],count:0};
+}
+function roundCellNote(name, slot, cell, shape) {
+  const lines=[name+" · "+slot];
+  const label=shape.mark[1]+(shape.count ? "×"+shape.count : "");
+  if (shape.kind==="retreat") lines.push(cell.was_active ? "本轮退潮，退出活动方向" : "本轮退潮；此前是否在活动方向内，超出已加载的报告范围");
+  else if (shape.kind==="idle") lines.push("不在活动方向内");
+  else lines.push((shape.carried ? "状态沿用：" : "活动方向：")+label);
+  if (!cell.covered) lines.push("本轮报告未覆盖该板块");
+  else {
+    lines.push("AI 本轮判断："+(roundMarks[cell.judged]?.[1] || "待确认"));
+    if (roundSkips[cell.skipped]) lines.push(roundSkips[cell.skipped]);
+    if (cell.reasons?.length) lines.push(cell.reasons.join("；"));
+  }
+  return lines.join("\n");
+}
+function roundChip(name, slot, cell) {
+  const shape=roundCell(cell);
+  if (!shape) return elt("span","·","rm-wait");
+  const chip=elt("span",undefined,"rm-chip rm-"+shape.kind+(shape.carried ? " rm-carried" : ""));
+  if (shape.carried) chip.append(elt("span","=","rm-sign"));
+  if (shape.mark[0]) chip.append(elt("span",shape.mark[0],"rm-sign"));
+  // Narrow cards drop the word of a counted phase and keep its sign and count.
+  chip.append(elt("span",shape.mark[1],["strengthen","maintain","weaken"].includes(shape.kind) ? "rm-word" : undefined));
+  if (shape.count) chip.append(elt("span","×"+shape.count,"rm-count numeric"));
+  const box=elt("div",undefined,"rm-cell");
+  box.title=roundCellNote(name,slot,cell,shape);
+  box.append(chip);
+  const change=cell.covered && cell.change!=null && cell.change!=="" ? Number(cell.change) : NaN;
+  if (Number.isFinite(change) && shape.kind!=="idle")
+    box.append(elt("span",(change>0 ? "+" : "")+(change*100).toFixed(2)+"%","rm-change numeric "+(change>0 ? "up" : change<0 ? "down" : "")));
+  return box;
+}
+// The active directions, one line per phase with the longest streak first.
+function rotationGroups(rotation) {
+  const rows=Object.entries(rotation || {}).map(([id,row])=>({id,...row}));
+  if (!rows.length) return empty("当前暂无已确认的活动方向");
+  const order=["STRENGTHEN","NEW","MAINTAIN","WEAKEN"], list=elt("dl",undefined,"dir-groups");
+  for (const phase of [...order,...new Set(rows.map(row=>row.phase).filter(phase=>!order.includes(phase)))]) {
+    const members=rows.filter(row=>row.phase===phase).sort((a,b)=>(b.streak||0)-(a.streak||0)),
+          [sign,word]=roundMarks[phase] || ["",statusName(phase)],
+          kind=order.includes(phase) ? phase.toLowerCase() : "held",
+          head=elt("dt",undefined,"rm-chip rm-"+kind), body=elt("dd");
+    if (sign) head.append(elt("span",sign,"rm-sign"));
+    head.append(elt("span",word),elt("span",members.length,"rm-count numeric"));
+    for (const row of members) {
+      const item=elt("span",undefined,"dir-item dir-"+kind+(row.streak>1 ? " dir-run" : ""));
+      item.append(elt("span",row.name || row.id,"dir-name"),elt("span",row.label || word,"dir-state"));
+      item.title=[row.name ? row.id : "未取得板块名称",row.report_id ? "最近一次变动的报告 "+row.report_id : ""].filter(Boolean).join("\n");
+      body.append(item);
+    }
+    if (!members.length) body.append(elt("span","无","muted"));
+    list.append(head,body);
+  }
+  return list;
+}
+// Rows are sectors, columns the five rounds; sectors that were never active today stay folded away.
+function roundMatrix(view, day, openReport, repaint) {
+  const slots=view.slots || [], order=["STRENGTHEN","NEW","MAINTAIN","WEAKEN"];
+  const reports=slots.map(slot=>day ? (view.reports || []).find(r=>r.slot===slot && r.at.slice(0,10)===day) : undefined);
+  const sectors=(view.round_sectors || []).map((sector,index)=>{
+    const cells=slots.map(slot=>sector.rounds?.[slot]), last=cells.filter(Boolean).at(-1);
+    const live=cells.some(cell=>cell && roundCell(cell).kind!=="idle");
+    const rank=!live ? 9 : !last?.active ? 5 : order.includes(last.phase) ? order.indexOf(last.phase) : 4;
+    return {name:sector.name || sector.id,cells,live,rank,index};
+  }).sort((a,b)=>a.rank-b.rank || a.index-b.index);
+  const idle=sectors.filter(sector=>!sector.live).length;
+  const wrap=elt("div",undefined,"round-matrix-wrap");
+  const bar=elt("div",undefined,"round-bar"), legend=elt("ul",undefined,"round-legend");
+  for (const [kind,sign,word] of [["new","＋","新增入场"],["strengthen","▲","加强"],["maintain","—","维持"],["weaken","▼","减弱"],
+    ["retreat","✕","退潮离场"]]) {
+    const item=elt("li"), chip=elt("span",undefined,"rm-chip rm-"+kind);
+    chip.append(elt("span",sign,"rm-sign"),elt("span",word));
+    item.append(chip);
+    legend.append(item);
+  }
+  const carried=elt("li"), carriedChip=elt("span",undefined,"rm-chip rm-held rm-carried");
+  carriedChip.append(elt("span","=","rm-sign"),elt("span","状态沿用"));
+  carried.append(carriedChip);
+  legend.append(carried,elt("li","×N 连续次数","rm-key"));
+  const toggle=(label,key)=>{
+    const node=button(label,()=>{roundsUI[key]=!roundsUI[key];repaint();});
+    node.setAttribute("aria-pressed",String(roundsUI[key]));
+    return node;
+  };
+  const switches=elt("div",undefined,"tabs round-switches");
+  if (idle) switches.append(toggle("非活动板块 "+idle,"idle"));
+  switches.append(toggle("看原文","source"));
+  bar.append(legend,switches);
+  wrap.append(bar);
+  if (roundsUI.source) {
+    slots.forEach((slot,index)=>{
+      const report=reports[index], row=elt("div",undefined,"slot");
+      row.append(elt("strong",slot,"numeric"));
+      if (report) row.append(elt("p",report.summary || statusName(report.status)),button("查看报告",()=>openReport(report.id)));
+      else row.append(elt("span","待报告","muted"));
+      wrap.append(row);
+    });
+    return wrap;
+  }
+  const scroll=elt("div",undefined,"table-scroll"), grid=elt("table",undefined,"round-matrix"), head=grid.createTHead().insertRow();
+  const corner=elt("th","板块");
+  corner.scope="col";
+  head.append(corner);
+  slots.forEach((slot,index)=>{
+    const th=elt("th"), report=reports[index];
+    th.scope="col";
+    th.append(elt("strong",slot,"numeric"));
+    if (report) {
+      const open=button("",()=>openReport(report.id),"rm-open");
+      open.append(elt("span","查看","rm-word"),document.createTextNode("报告"));
+      open.setAttribute("aria-label","查看 "+slot+" 报告");
+      th.append(open);
+    } else {
+      const round=day && (view.rotation_window || []).find(r=>r.trade_date===day && r.slot===slot);
+      th.append(elt("span",["FAILED","MISSING"].includes(round?.status) ? roundStates[round.status] : "待报告","muted"));
+    }
+    head.append(th);
+  });
+  const body=grid.createTBody();
+  for (const sector of sectors) {
+    if (!sector.live && !roundsUI.idle) continue;
+    const row=body.insertRow(), name=elt("th",sector.name);
+    name.scope="row";
+    if (!sector.live) row.className="rm-idle-row";
+    row.append(name);
+    sector.cells.forEach((cell,index)=>row.insertCell().append(roundChip(sector.name,slots[index],cell)));
+  }
+  scroll.append(grid);
+  wrap.append(scroll);
+  if (!body.rows.length) wrap.append(empty(sectors.length ? "今日暂无活动方向" : "暂无已落库的板块判断"));
+  return wrap;
+}
 function renderOverview() {
   const view=state.view, market=view.market, screen=$("screen");
   const header=title("轮动与机会","查看五轮研判、板块状态与已有模拟持仓",button("刷新",async()=>{if(await refresh())renderOverview();}));
@@ -202,7 +351,7 @@ function renderOverview() {
     ["自动持仓与待执行",view.evaluation.open_or_pending],["ETF 报价",market?.quality.etf_quote_count],
   ]);
   const panes=elt("div",undefined,"split");
-  const rounds=card("五轮报告"), selected=card("报告详情");
+  const rounds=elt("section",undefined,"card round-card"), selected=card("报告详情");
   selected.append(empty("选择一份已落库的报告"));
   let detailRequest = 0;
   async function openReport(id) {
@@ -210,18 +359,11 @@ function renderOverview() {
     const detail = await api(apiRoot+"/report?id="+encodeURIComponent(id));
     if (request === detailRequest && selected.isConnected) reportDetail(selected,detail,()=>openReport(id));
   }
-  for (const slot of view.slots) {
-    const report=view.reports.find(r=>r.slot===slot && r.at.slice(0,10)===dayReports);
-    const row=elt("div",undefined,"slot");
-    row.append(elt("strong",slot,"numeric"));
-    if (report) {
-      row.append(elt("p",report.summary || statusName(report.status)),button("查看报告",()=>openReport(report.id)));
-    } else row.append(elt("span","待报告","muted"));
-    rounds.append(row);
-  }
+  const paintRounds=()=>rounds.replaceChildren(elt("h2","五轮报告"),roundMatrix(view,dayReports,openReport,paintRounds));
+  paintRounds();
   panes.append(rounds,selected);
   const chain=card("活动轮动方向");
-  chain.append(table(["板块标识","状态","报告"],Object.entries(view.rotation).map(([id,row])=>[id,tag(row.label||statusName(row.phase)),row.report_id]),"当前暂无已确认的活动方向"));
+  chain.append(rotationGroups(view.rotation));
   const timeline=card("1.5 日轮动轨迹");
   timeline.append(table(["交易日","轮次","状态","报告"],view.rotation_window.map(r=>[
     r.trade_date,r.slot,roundStates[r.status] || statusName(r.status),r.report_id
@@ -1100,46 +1242,149 @@ async function renderHotSectors() {
   }
   const composing=researchSearch(search,form,hotUI,load);for(const control of [days,limit])control.addEventListener("change",()=>{hotUI[control.name]=control.value;action(load);});hotUI.reload=()=>composing()?undefined:load();await load();
 }
-function backtestRulesNotice() {
+// Numbers come from the rule snapshot the server will give the next new cycle, never from this file.
+function rulePercent(value) {
+  const n=Number(value);
+  return Number.isFinite(n) ? (n*100).toFixed(1)+"%" : "—";
+}
+function flowChain(steps, label) {
+  const chain=elt("ol",undefined,"flow-chain");
+  if (label) chain.setAttribute("aria-label",label);
+  const box=(name,detail)=>{
+    const node=elt("div",undefined,"flow-node");node.append(elt("strong",name));
+    if (detail) node.append(elt("span",detail));
+    return node;
+  };
+  for (const [name,detail,otherwise] of steps) {
+    const step=elt("li",undefined,"flow-step");
+    // A step given as a list of [name, detail] pairs is a set of alternative outcomes, stacked.
+    if (Array.isArray(name)) { const split=elt("div",undefined,"flow-split");split.append(...name.map(pair=>box(...pair)));step.append(split); }
+    else step.append(box(name,detail));
+    if (otherwise) {
+      const drop=elt("p",undefined,"flow-drop");
+      drop.append(elt("b","否则"),document.createTextNode(otherwise));step.append(drop);
+    }
+    chain.append(step);
+  }
+  return chain;
+}
+function flowBranch(name, context, rows) {
+  const branch=elt("section",undefined,"flow-branch"),list=elt("ol",undefined,"flow-rules");
+  branch.append(elt("h4",name),elt("p",context,"flow-branch-context"));
+  for (const [label,condition,action,tone] of rows) {
+    const row=elt("li",undefined,"flow-rule"),copy=elt("div",undefined,"flow-rule-condition");
+    copy.append(elt("strong",label),elt("span",condition));
+    row.append(copy,elt("span",action,"flow-action flow-action-"+tone));list.append(row);
+  }
+  branch.append(list);
+  return branch;
+}
+function exitLineTable(rule) {
+  const order=["BEAR_DEFENSE","RANGE_ROTATION","BULL_OFFENSE"],table=elt("table",undefined,"flow-table");
+  const head=table.createTHead().insertRow();head.append(elt("th","各线取值"));
+  for (const key of order) { const cell=elt("th",regimes[key][0],"regime-text-"+regimes[key][1]);cell.scope="col";head.append(cell); }
+  const body=table.createTBody(),bull=rule.regime_bull_volume_ratio,bear=rule.regime_bear_volume_ratio;
+  const line=key=>row=>row[key][0]+" × ATR20，限 "+rulePercent(row[key][1])+"–"+rulePercent(row[key][2]);
+  const rows=[
+    ["判定档位",key=>({BEAR_DEFENSE:"各指数收盘低于 MA20，且任一 MA20 下行或量能比 ≤ "+bear,
+      RANGE_ROTATION:"其余情况；指数数据不足时也按本档并标注",
+      BULL_OFFENSE:"各指数收盘高于 MA20、MA20 上行，且量能比 ≥ "+bull})[key]],
+    ["止损线",line("stop_loss")],["移动止盈启动线",line("trail_start")],["自峰值回撤线",line("trail_drawdown")],
+    ["目标止盈线",line("target_reduce")],
+    ["滞涨退出",row=>"T+"+row.stagnant_days+" 起浮盈低于 +"+rulePercent(row.stagnant_return)],
+    ["持有上限",row=>"T+"+row.max_days],
+  ];
+  for (const [label,value] of rows) {
+    const tr=body.insertRow(),name=elt("th",label);name.scope="row";tr.append(name);
+    for (const key of order) tr.append(elt("td",label==="判定档位" ? value(key) : value(rule.exit_table[key])));
+  }
+  const wrap=elt("div",undefined,"flow-table-wrap");wrap.append(table);
+  return wrap;
+}
+// Rule sections the reader has opened; the workbench rebuilds the notice on every refresh.
+const openRuleSections=new Set();
+function ruleSection(key, number, name, gist) {
+  const section=elt("details",undefined,"flow-section"),summary=elt("summary"),heading=elt("h3");
+  heading.append(elt("span",number,"backtest-rule-number"),document.createTextNode(name));
+  summary.append(heading,elt("span",gist,"flow-gist"));
+  section.open=openRuleSections.has(key);
+  section.addEventListener("toggle",()=>{ if (section.open) openRuleSections.add(key); else openRuleSections.delete(key); });
+  section.append(summary);
+  return section;
+}
+function backtestRulesNotice(rule) {
+  const exits=rule?.exit_table ? rule : null,half=rulePercent(rule?.reduce_ratio ?? "0.50").replace(".0%","%");
   const notice=elt("aside",undefined,"backtest-rules");
   notice.setAttribute("aria-labelledby","backtest-rules-title");
   const heading=elt("div",undefined,"backtest-rules-heading"),name=elt("h2","板块穿透 ETF · 自动模拟规则");
   name.id="backtest-rules-title";
-  heading.append(name,elt("span","规则说明","tag"));
-  notice.append(heading,elt("p","适用于自动周期；手动组合按您设置的节点执行。","backtest-rules-intro"));
-  const columns=elt("div",undefined,"backtest-rules-grid");
-  const rules=[
-    ["准入条件","新增 / 加强 · AI 明确选中",[
-      "板块方向有效，AI选中具有成分穿透或已核验板块—指数关联的ETF。",
-      "境内被动行业或主题ETF的身份、实际交易规则、交易单位及当日可用报价通过核验；规则待复核时暂停新入场。",
-      "同一ETF只保留一个活动周期；“维持”用于观察或继续持仓，自动模式不加仓。",
-    ]],
-    ["减仓条件","首次转弱 · 目标 50%",[
-      "本周期绑定的板块首次明确转弱，登记当时持仓50%的减仓目标。",
-      "按该ETF交易单位向下取整，同一周期只登记一次减仓目标。",
-      "未成交份额继续等待执行，后续转强时保留已登记的待卖目标。",
-    ]],
-    ["清仓条件","明确退潮 · 全部剩余持仓",[
-      "本周期绑定的板块明确退潮，登记卖出全部剩余份额。",
-      "清仓可直接触发，并覆盖尚未完成的减仓目标。",
-      "卖完后结束周期；待买尚未成交时出现转弱或退潮，则撤销买入。",
-    ]],
-  ];
-  for (const [index,[label,trigger,items]] of rules.entries()) {
-    const section=elt("section",undefined,"backtest-rule"),title=elt("h3"),number=elt("span",String(index+1).padStart(2,"0"),"backtest-rule-number");
-    number.setAttribute("aria-hidden","true");title.append(number,document.createTextNode(label));
-    const list=elt("ul");for (const item of items) list.append(elt("li",item));
-    section.append(title,elt("p",trigger,"backtest-rule-trigger"),list);columns.append(section);
+  heading.append(name,elt("span",rule?.version ? "新周期规则 "+rule.version : "规则说明","tag"));
+  notice.append(heading,elt("p","适用于自动周期；手动组合按您设置的节点执行。每个周期开仓时冻结当时的规则，下方为之后新开周期使用的规则，点标题展开。","backtest-rules-intro"));
+
+  const screen=ruleSection("screen","01","筛选逻辑 · 什么情况下买入","五轮研判 → 板块方向 → AI 选 ETF → 代表性 → 资料核验 → 活动周期 → 登记买入");
+  screen.append(flowChain([
+    ["五轮研判","09:35、10:35、13:05、14:05、14:30，AI 逐板块判断方向"],
+    ["板块方向","本轮为新增或加强","维持只观察或继续持仓，不加仓；转弱、退潮不买"],
+    ["AI 选 ETF","从已冻结的板块—指数关联里明确选出，每板块至多 3 只","未选中或引用有误，不入场"],
+    ["代表性","板块成分与指数权重的重合未被否决；成员不少于 300 只的大板块须有已发布的产业归属或显式关联","仅作观察项"],
+    ["资料核验","境内被动行业/主题 ETF 的身份、交易规则、交易单位、上市状态和当日报价均已核验","待复核期间暂停新开仓"],
+    ["活动周期","该 ETF 当前没有未结束的周期","沿用原周期，不重复开仓"],
+    ["登记买入","由节点之后第一条有效报价成交，资金须够一手及费用","成交前板块转弱或退潮，撤销买入"],
+  ],"筛选逻辑"));
+
+  const trade=ruleSection("trade","02","交易逻辑 · 买入后怎么卖",exits
+    ? "买入成交 → 冻结退出计划 → 报价与报告触发 → 登记卖单 → 减仓或全清"
+    : "买入成交 → 报告触发 → 登记卖单 → 减仓或全清");
+  const report=[["明确退潮","绑定板块被判为退潮","全清","exit"]];
+  if (exits) {
+    trade.append(flowChain([
+      ["买入成交","成本取实际成交价，当日买入的份额次日才可卖"],
+      ["冻结退出计划","按买入前一交易日的大盘档位（"+(exits.regime_mode==="DUAL" ? "沪深300 + 中证1000" : "上证指数")+"）和该 ETF 的 ATR20 算出各线，之后不再变"],
+      ["持仓","之后每条报价、每份报告各判一次，先撮合已有订单再判规则"],
+    ],"开仓"));
+    const quote=[
+      ["成本止损","浮盈 ≤ −止损线","全清","exit"],
+      ["余仓保本","已减过仓，峰值浮盈到过 +"+rulePercent(exits.breakeven_arm_return)+" 或已目标止盈，现价 ≤ 成本 × "+exits.breakeven_buffer,"全清","exit"],
+      ["移动止盈","峰值浮盈 ≥ 启动线，且自峰值回撤 ≥ 回撤线","全清","exit"],
+    ];
+    if (exits.time_exit_enabled) quote.push(["到期退出","14:05 起：持有交易日到上限；或到滞涨天数且浮盈低于滞涨线","全清","exit"]);
+    quote.push(["目标止盈","未减过仓，浮盈 ≥ 目标线","减"+half+"，并启用保本","reduce"]);
+    report.push(["首次转弱","绑定板块首次被判转弱，同一周期只减一次","减"+half,"reduce"],
+      ["再次转弱","跨交易日第 "+exits.weak_exit_trade_days+" 次转弱，同一天多次只计一次","全清","exit"]);
+    if (exits.bear_early_weak_exit) report.push(["弱势档早衰","弱势档、保本未启用、成交次日起现价低于成本时首次转弱","全清","exit"]);
+    report.push(["转强或维持","转弱计数清零；待核实或本轮未覆盖则不变","继续持有","hold"]);
+    const fork=elt("div",undefined,"flow-fork");
+    fork.append(flowBranch("每条报价","五轮采样和轮后补价；自上而下判，命中第一条即停",quote),
+      flowBranch("每份研判报告","只看本周期绑定的板块",report));
+    trade.append(fork);
+  } else {
+    trade.append(flowChain([
+      ["买入成交","成本取实际成交价，当日买入的份额次日才可卖"],
+      ["持仓","只由研判报告触发卖出，没有按价格或持有天数的退出"],
+    ],"开仓"));
+    report.push(["首次转弱","绑定板块首次被判转弱，同一周期只减一次","减"+half,"reduce"],
+      ["转强或维持","已登记的待卖目标保留","继续持有","hold"]);
+    const fork=elt("div",undefined,"flow-fork");fork.append(flowBranch("每份研判报告","只看本周期绑定的板块",report));
+    trade.append(fork);
   }
-  const foot=elt("div",undefined,"backtest-rules-foot");
+  trade.append(flowChain([
+    ["登记卖单","全清覆盖未成交的减仓；减仓按交易单位向下取整"],
+    ["等待成交","由之后第一条有效报价成交，遵守 T+1；每轮后 30、120、300 秒补价至多 3 次，轮次失败时也为卖单补价"],
+    [[["减仓成交","余仓继续持有，回到上面的判定"],["全清成交","周期结束，计入胜率与收益"]]],
+  ],"成交"));
+  if (exits) trade.append(exitLineTable(exits));
+
+  const notes=ruleSection("notes","03","口径说明","研判参考、取价口径、历史周期"),foot=elt("div",undefined,"backtest-rules-foot");
   for (const [label,text] of [
-    ["研判参考","主板占比、板块暴露、核心股、当日报价、规模和日均成交额供AI综合研判；规模与流动性保留资料日期、覆盖和缺失状态，不设统一数值准入线。"],
-    ["成交与等待","节点登记后，使用交易时段内、节点之后的有效新报价撮合。买入资金须足够一手及已配置费用；卖出遵守T+1，未解锁份额继续等待。"],
-    ["历史周期","已有持仓退出沿用创建时冻结的规则；当前产品规则待复核时仍按可卖份额与有效报价检查退出。实际进度见下方节点与成交记录。"],
+    ["研判参考","主板占比、板块暴露、核心股、当日报价、规模和日均成交额供 AI 综合研判；规模与流动性保留资料日期、覆盖和缺失状态，不设统一数值准入线。"],
+    ["取价口径","浮盈和峰值只用轮次采样到的报价，不用日线最高价；ATR20 取买入前 20 个交易日，缺失时各线取下限并标注。"],
+    ["历史周期",exits ? "按 v1 开仓的周期没有价格和时间退出，只有首次转弱减"+half+"、明确退潮全清；每笔实际使用的规则和各线见下方周期的退出计划。"
+      : "已有持仓退出沿用创建时冻结的规则；实际进度见下方节点与成交记录。"],
   ]) {
     const line=elt("p");line.append(elt("strong",label),document.createTextNode(text));foot.append(line);
   }
-  notice.append(columns,foot);
+  notes.append(foot);
+  notice.append(screen,trade,notes);
   return notice;
 }
 
@@ -1151,7 +1396,7 @@ async function renderBacktests() {
     b.setAttribute("aria-pressed",String(state.mode===mode)); tabs.append(b);
   }
   const screen=$("screen");
-  screen.replaceChildren(title("回测工作台","查阅自动周期，或独立重放手动组合"),backtestRulesNotice(),tabs);
+  screen.replaceChildren(title("回测工作台","查阅自动周期，或独立重放手动组合"),backtestRulesNotice(state.view.new_cycle_rule),tabs);
   if (state.mode==="auto") {
     stopPoll();
     renderAutomaticBacktests(screen,state.view);

@@ -842,7 +842,7 @@ function sectorEtfPenetration(data) {
   }
   box.append(grid);
   if(mapping){
-    const state=[mapping.status?"最近一次维护 "+({PARTIAL:"部分完成，有待补项",COMPLETE:"全部完成"}[mapping.status] || mapping.status):null,Number.isFinite(mapping.pending)?"待补 "+mapping.pending+" 项":null,
+    const state=[mapping.status?"最近一次维护 "+({PARTIAL:"部分完成，有待补项",READY:"全部完成"}[mapping.status] || mapping.status):null,Number.isFinite(mapping.pending)?"待补 "+mapping.pending+" 项":null,
       mapping.review_required?"待人工复核 "+mapping.review_required+" 项":null].filter(Boolean).join(" · ");
     if(state)box.append(elt("p",state,"sector-etf-state"));
     if(mapping.message)box.append(elt("p",mapping.message,"sector-etf-scope"));

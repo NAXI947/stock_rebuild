@@ -133,8 +133,8 @@ def run(ledger, codes, atr, rules, now, apply):
                    ORDER BY at,(kind<>'report'),id""", (ledger.ns, bought["filled_at"], code)).fetchall()]
             # The index bars were collected after this buy; only sessions before the buy day are read.
             previous = [day for day in calendar.days if day < moment(bought["filled_at"]).date()]
-            inputs = classify(series, previous[-1].isoformat(), rules.regime_mode,
-                              bull=rules.regime_bull_volume_ratio, bear=rules.regime_bear_volume_ratio)
+            inputs = classify(series, previous[-1].isoformat(), rules.regime_mode, bull=rules.regime_bull_volume_ratio,
+                              bear=rules.regime_bear_volume_ratio) if previous else {}
             value, _, as_of = atr.get(code, "").partition("@")
             inputs = inputs | dict(atr20=value or None, atr_as_of=as_of or None)
             migrated = migrate(cycle, events, calendar, rules, inputs, stamp)

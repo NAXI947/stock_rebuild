@@ -120,9 +120,13 @@ def load(ledger, since):
         config, = run
         cycles = [json.loads(body) if isinstance(body, str) else body for body, in conn.execute(
             "SELECT body FROM cycles WHERE ns=%s AND opened_at>=%s ORDER BY opened_at,id", (ledger.ns, since)).fetchall()]
+        # A saved report carries its whole source document; the replay needs three fields of it.
+        codes = sorted({cycle["etf"] for cycle in cycles})
         events = [(kind, json.loads(payload) if isinstance(payload, str) else payload) for kind, payload in conn.execute(
-            """SELECT kind,payload FROM events WHERE ns=%s AND at>=%s
-               ORDER BY at,(kind<>'report'),id""", (ledger.ns, since)).fetchall()]
+            """SELECT kind,CASE WHEN kind='report' THEN jsonb_build_object(
+                       'id',payload->'id','at',payload->'at','sectors',payload->'sectors') ELSE payload END
+               FROM events WHERE ns=%s AND at>=%s AND (kind='report' OR payload->>'etf'=ANY(%s))
+               ORDER BY at,(kind<>'report'),id""", (ledger.ns, since, codes)).fetchall()]
     return (json.loads(config) if isinstance(config, str) else config), cycles, events
 
 

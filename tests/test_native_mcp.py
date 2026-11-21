@@ -5,6 +5,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import psycopg
+
 from modules.strategy_hermes.native_mcp import application, tools_schema, MAX_BODY
 
 REQUEST_ID='pv-fdca36cb1f92865c64fc233747999a35ecb1fa42'
@@ -223,6 +225,51 @@ class NativeMCP(unittest.TestCase):
         self.assertEqual(maintenance.status.call_count, 3)
         self.assertEqual(stop.wait.call_count, 3)
         self.assertFalse(self.queue.mock_calls)
+
+    def test_passing_database_errors_are_retried_inside_the_wait_limit(self):
+        stop = Mock()
+        stop.wait.return_value = False
+        lost = psycopg.OperationalError("connection reset")
+        self.queue.submit.side_effect = [lost, dict(state="SUBMITTED", run_id="round")]
+        self.queue.status.side_effect = [lost, dict(state="PUBLISHED", run_id="round", report_id="octop-1")]
+        self.app = application(self.queue, "x" * 48, stop=stop, wait_seconds=50)
+        with patch("modules.strategy_hermes.native_mcp.monotonic", return_value=0), \
+                self.assertLogs("modules.strategy_hermes.native_mcp", "WARNING"):
+            status, body = self.request(dict(jsonrpc="2.0", id=20, method="tools/call",
+                params={"name": "stock_hermes_submit", "arguments": {"run_id": "round", "decisions": "[]"}}))
+        self.assertEqual((status, json.loads(body["result"]["content"][0]["text"])["state"]), (200, "PUBLISHED"))
+        self.assertEqual(self.queue.submit.call_args_list, [(("round", []),)] * 2)
+        self.assertEqual(self.queue.status.call_count, 2)
+
+    def test_a_poll_that_keeps_failing_returns_the_last_saved_state(self):
+        stop, clock = Mock(), iter(range(1000))
+        stop.wait.return_value = False
+        self.queue.status.side_effect = [dict(state="SUBMITTED", run_id="round")] + [OSError("unreachable")] * 100
+        self.app = application(self.queue, "x" * 48, stop=stop, wait_seconds=50)
+        with patch("modules.strategy_hermes.native_mcp.monotonic", side_effect=lambda: next(clock)), \
+                self.assertLogs("modules.strategy_hermes.native_mcp", "WARNING"):
+            status, body = self.request(dict(jsonrpc="2.0", id=21, method="tools/call",
+                params={"name": "stock_hermes_status", "arguments": {"run_id": "round"}}))
+        self.assertEqual((status, json.loads(body["result"]["content"][0]["text"])), (200, dict(state="SUBMITTED", run_id="round")))
+        # No retry is started inside the last six seconds of the fifty; the fake clock advances one second per reading.
+        self.assertLess(self.queue.status.call_count, 50)
+        self.assertLessEqual(next(clock), 50)
+
+    def test_an_unavailable_service_and_other_database_errors_still_answer_503(self):
+        stop, clock = Mock(), iter(range(1000))
+        stop.wait.return_value = False
+        request = dict(jsonrpc="2.0", id=22, method="tools/call",
+                       params={"name": "stock_hermes_prepare", "arguments": {"slot": "09:35"}})
+        self.app = application(self.queue, "x" * 48, stop=stop, wait_seconds=50)
+        self.queue.prepare.side_effect = psycopg.OperationalError("down")
+        with patch("modules.strategy_hermes.native_mcp.monotonic", side_effect=lambda: next(clock)), \
+                self.assertLogs("modules.strategy_hermes.native_mcp", "WARNING"):
+            self.assertEqual(self.request(request), (503, {"error": "NATIVE_ROUND_SERVICE_UNAVAILABLE"}))
+        self.assertGreater(self.queue.prepare.call_count, 1)
+        self.queue.prepare.reset_mock()
+        self.queue.prepare.side_effect = psycopg.ProgrammingError("bug")
+        self.assertEqual(self.request(request), (503, {"error": "NATIVE_ROUND_SERVICE_UNAVAILABLE"}))
+        self.queue.prepare.assert_called_once()
 
     def test_terminal_maintenance_without_pending_delivery_does_not_poll(self):
         for state, qq in (("SUCCEEDED", {"state": "SENT"}), ("PARTIAL", {"state": "FAILED"}), ("SKIPPED", {}), ("FAILED", {})):

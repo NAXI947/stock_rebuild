@@ -14,7 +14,7 @@
 | 入口 | 用途 |
 |---|---|
 | modules/strategy_hermes/stage2/native_rounds.py | 持久队列、10分钟期限、冻结上下文、幂等提交、worker执行与重启对账 |
-| modules/strategy_hermes/native_mcp.py | 独立内部8001端口的鉴权MCP，三项受控工具、单请求线程、有界等待 |
+| modules/strategy_hermes/native_mcp.py | 独立内部8001端口的鉴权MCP，三项受控工具、单请求线程、有界等待；等待期限内遇到连接中断、锁或语句超时会重试，期限内始终不可用才返回503 |
 | modules/strategy_hermes/runtime.py、stage2/schedule.py | internal/octop触发模式，独立MCP监听和唯一worker |
 | deploy/octop_native_guard.py | 专用专家工具白名单、模型预算、真实完成回执核验 |
 | deploy/octop_native_delivery.py | 原生任务异常时保留已收到的用量、执行轨迹和失败反馈 |

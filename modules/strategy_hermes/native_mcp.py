@@ -21,6 +21,10 @@ from .manual_api import LocalServer, QuietHandler, TOKEN, authorized
 MAX_BODY = 256 * 1024
 VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 TERMINAL = {"READY", "PUBLISHED", "FAILED", "SKIPPED", "PAUSED", "NOT_DUE", "NOT_TRADING_DAY"}
+# Errors that can pass on their own: a dropped or refused connection, a lock or statement timeout.
+TRANSIENT = (OSError, psycopg.OperationalError)
+# A retried query can itself wait out a five-second lock timeout; none is started this close to the limit.
+RETRY_MARGIN = 6
 
 
 def scope_list(value,field):
@@ -93,11 +97,24 @@ def application(queue, token, *, stop=None, wait_seconds=50, maintenance=None):
     stop = stop or Event()
     known_tools={tool["name"] for tool in tools_schema(maintenance is not None)}
 
-    def wait(result, service=None, terminal=None):
+    def wait(call, service=None, terminal=None):
+        """Run one queue call and follow its run until a terminal state or the wait limit.
+
+        A lost connection or a lock or statement timeout is retried inside the same limit; every call
+        routed here is a read or repeats safely with the same arguments.
+        """
         service = service or queue
         terminal = terminal or TERMINAL
         deadline = monotonic() + wait_seconds
         delivery_deadline = None
+        while True:
+            try:
+                result = call()
+                break
+            except TRANSIENT as exc:
+                if monotonic() >= deadline - RETRY_MARGIN or stop.wait(.5):
+                    raise
+                logging.getLogger(__name__).warning('native MCP call retried after %s', type(exc).__name__)
         while result.get("run_id") and monotonic() < deadline:
             if result.get("state") in terminal:
                 if result.get("state") not in ("PUBLISHED","SUCCEEDED","PARTIAL") or result.get("qq", {}).get("state") not in ("PENDING", "SENDING"):
@@ -108,28 +125,34 @@ def application(queue, token, *, stop=None, wait_seconds=50, maintenance=None):
                     break
             if stop.wait(.5):
                 break
-            result = service.status(result["run_id"])
+            try:
+                result = service.status(result["run_id"])
+            except TRANSIENT as exc:
+                # Keep the last saved state; the next poll, or the agent's own status call, reads it again.
+                logging.getLogger(__name__).warning('native MCP status poll failed: %s', type(exc).__name__)
+                if monotonic() >= deadline - RETRY_MARGIN:
+                    break
         return result
 
     def invoke_tool(name,args):
         if name == "stock_hermes_prepare" and set(args) == {"slot"}:
-            result = wait(queue.prepare(args["slot"]))
+            result = wait(lambda: queue.prepare(args["slot"]))
         elif name == "stock_hermes_submit" and set(args) == {"run_id", "decisions"}:
             if not isinstance(args["decisions"], str):
                 raise ValueError("DECISIONS_JSON_STRING_REQUIRED")
             decisions = json.loads(args["decisions"], object_pairs_hook=unique_object)
-            result = wait(queue.submit(args["run_id"], decisions))
+            result = wait(lambda: queue.submit(args["run_id"], decisions))
         elif name == "stock_hermes_status" and set(args) == {"run_id"}:
-            result = wait(queue.status(args["run_id"]))
+            result = wait(lambda: queue.status(args["run_id"]))
         elif maintenance is not None and name == "stock_etf_maintenance_prepare" and set(args) in ({"mode"},{"mode","request_ids"},{"mode","target_codes"}):
             from .etf_maintenance import TERMINAL as MAINTENANCE_TERMINAL
             if args['mode']=='verify' and 'request_ids' not in args:
                 raise ValueError('REQUEST_IDS_REQUIRED_FOR_VERIFY')
             options={key:scope_list(args[key],key) for key in ('request_ids','target_codes') if key in args}
-            result = wait(maintenance.prepare(args['mode'],**options),maintenance,MAINTENANCE_TERMINAL)
+            result = wait(lambda: maintenance.prepare(args['mode'],**options),maintenance,MAINTENANCE_TERMINAL)
         elif maintenance is not None and name == "stock_etf_maintenance_status" and set(args) == {"run_id"}:
             from .etf_maintenance import TERMINAL as MAINTENANCE_TERMINAL
-            result = wait(maintenance.status(args['run_id']),maintenance,MAINTENANCE_TERMINAL)
+            result = wait(lambda: maintenance.status(args['run_id']),maintenance,MAINTENANCE_TERMINAL)
         elif maintenance is not None and name == 'stock_etf_verification_context' and set(args)=={'target_id'}:
             result=maintenance.context(args['target_id'])
         elif maintenance is not None and name == 'stock_etf_verification_submit' and set(args)=={'target_id','review'}:

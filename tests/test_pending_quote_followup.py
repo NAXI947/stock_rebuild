@@ -360,7 +360,10 @@ class QuoteFollowupDatabase(TestCase):
                          [("14:05", None, True, followup.run_keys(facade.ns, D2, "14:05")), ("13:05", "followup-weak", False, keys)])
         self.assertEqual(moment(anchors[0]["at"]), moment(stamp(D2, "14:05")))
         self.assertIn(followup.OUTCOME, records[keys[0]])
+        # A newer round that is still running already retires the failed one.
         claim = helper.store.claim_round(D2, "14:30", planned_at(D2, "14:30"))
+        anchors, _, _ = followup.read_state(facade, D2)
+        self.assertEqual([(a["slot"], a["report_id"]) for a in anchors], [("13:05", "followup-weak")])
         helper.store.publish(claim, report("followup-late", D2, "14:30", [(A, "维持")]), FROZEN_DAYS, {ETF: 100}, {},
                              targets=("redis",))
         anchors, _, _ = followup.read_state(facade, D2)

@@ -105,15 +105,15 @@ def read_state(ledger, day):
         rounds = conn.execute("""SELECT t.slot,t.state,t.planned_at,e.at,t.report_id
             FROM round_tasks t LEFT JOIN events e ON e.ns=t.ns AND e.kind='report' AND e.id=t.report_id
             WHERE t.ns=%s AND t.trade_date=%s AND t.slot=ANY(%s::text[])
-              AND (t.state='FAILED' OR (t.state='PUBLISHED' AND e.id IS NOT NULL))
             ORDER BY t.planned_at DESC""", (ledger.ns, day, list(SLOTS))).fetchall()
         anchors = []
         if rounds and rounds[0][1] == 'FAILED':
             # The newest round failed: its own attempts, timed from its planned start, price sells only.
+            # A failed round behind a newer one, even one still running, no longer counts.
             slot, _, planned, _, _ = rounds[0]
             anchors.append(dict(slot=slot, at=planned.astimezone(CHINA).isoformat(), report_id=None,
                                 keys=run_keys(ledger.ns, day, slot), sells_only=True))
-        published = next((row for row in rounds if row[1] == 'PUBLISHED'), None)
+        published = next((row for row in rounds if row[1] == 'PUBLISHED' and row[3] is not None), None)
         if published:
             anchors.append(dict(slot=published[0], at=published[3], report_id=published[4],
                                 keys=run_keys(ledger.ns, day, published[0])))

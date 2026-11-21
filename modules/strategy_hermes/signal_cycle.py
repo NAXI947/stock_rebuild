@@ -153,13 +153,14 @@ def process_quote(cycle, quote, calendar, exit_inputs=None):
 
 
 def _apply_report_exits(cycle, rules, report, decision):
-    """v2: weak days are counted per trading day and a second one clears the position."""
+    """v2 and later: weak days are counted per trading day and a second one clears the position."""
     if cycle["status"] != "OPEN":
         return
     cycle.setdefault("weak_trade_days", [])
     if decision in ("HOLD", "UP"):
         # A report that only repeats earlier evidence is shown as HOLD but is not a new judgement.
-        if not report["sectors"][cycle["primary_sector"]].get("duplicate_evidence"):
+        if (not report["sectors"][cycle["primary_sector"]].get("duplicate_evidence")
+                and not (decision == "HOLD" and rules.hold_keeps_weak_days)):
             cycle["weak_trade_days"] = []
     elif decision == "EXIT":
         _exit(cycle, "AI_RETREAT", report=report)

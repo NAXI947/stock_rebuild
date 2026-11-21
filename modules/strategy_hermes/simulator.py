@@ -64,7 +64,7 @@ class Calendar:
         return dt.date() in self.days and session(dt)
 
 
-V1, V2 = "hermes_signal_cycle_v1", "hermes_signal_cycle_v2"
+V1, V2, V2_0_1 = "hermes_signal_cycle_v1", "hermes_signal_cycle_v2", "hermes_signal_cycle_v2_0_1"
 REGIMES = ("BEAR_DEFENSE", "RANGE_ROTATION", "BULL_OFFENSE")
 # Triples are (ATR20 multiple, floor, cap); a line is clamp(multiple * ATR20, floor, cap).
 EXIT_TABLE = {
@@ -105,6 +105,8 @@ class Rules:
     regime_mode: str | None = None
     regime_bull_volume_ratio: str | None = None
     regime_bear_volume_ratio: str | None = None
+    # From v2.0.1 a HOLD report leaves the weak trading days as they are; only UP clears them.
+    hold_keeps_weak_days: bool = False
 
     @classmethod
     def v2(cls, regime_mode, **changes):
@@ -114,9 +116,15 @@ class Rules:
                       regime_mode=regime_mode, regime_bull_volume_ratio="1.10", regime_bear_volume_ratio="0.90")
         return cls(**(values | changes))
 
+    @classmethod
+    def v2_0_1(cls, regime_mode):
+        return cls.v2(regime_mode, version=V2_0_1, hold_keeps_weak_days=True)
+
     def snapshot(self):
-        """Frozen form for cycles and rule_versions; v1 keeps its original keys."""
+        """Frozen form for cycles and rule_versions; v1 and v2 keep their original keys."""
         body = asdict(self)
+        if not self.hold_keeps_weak_days:
+            del body["hold_keeps_weak_days"]
         if self.exit_table is None:
             for key in EXIT_FIELDS:
                 del body[key]
@@ -124,9 +132,11 @@ class Rules:
 
     def _check_exits(self):
         if self.exit_table is None:
-            if any(getattr(self, key) for key in EXIT_FIELDS):
+            if any(getattr(self, key) for key in (*EXIT_FIELDS, "hold_keeps_weak_days")):
                 raise ValueError("exit settings require an exit table")
             return
+        if type(self.hold_keeps_weak_days) is not bool or self.hold_keeps_weak_days and self.version == V2:
+            raise ValueError("invalid exit rules")
         if self.version == V1 or set(self.exit_table) != set(REGIMES) or self.regime_mode not in ("DUAL", "SINGLE"):
             raise ValueError("invalid exit rules")
         for row in self.exit_table.values():

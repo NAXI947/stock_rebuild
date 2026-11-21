@@ -1352,7 +1352,9 @@ function backtestRulesNotice(rule) {
     report.push(["首次转弱","绑定板块首次被判转弱，同一周期只减一次","减"+half,"reduce"],
       ["再次转弱","跨交易日第 "+exits.weak_exit_trade_days+" 次转弱，同一天多次只计一次","全清","exit"]);
     if (exits.bear_early_weak_exit) report.push(["弱势档早衰","弱势档、保本未启用、成交次日起现价低于成本时首次转弱","全清","exit"]);
-    report.push(["转强或维持","转弱计数清零；待核实或本轮未覆盖则不变","继续持有","hold"]);
+    report.push(exits.hold_keeps_weak_days
+      ? ["转强或维持","转强时转弱计数清零；维持、待核实或本轮未覆盖则不变","继续持有","hold"]
+      : ["转强或维持","转弱计数清零；待核实或本轮未覆盖则不变","继续持有","hold"]);
     const fork=elt("div",undefined,"flow-fork");
     fork.append(flowBranch("每条报价","五轮采样和轮后补价；自上而下判，命中第一条即停",quote),
       flowBranch("每份研判报告","只看本周期绑定的板块",report));

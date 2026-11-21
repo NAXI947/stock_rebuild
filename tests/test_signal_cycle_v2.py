@@ -256,6 +256,29 @@ class ReportExits(TestCase):
         self.assertEqual(repeated["weak_trade_days"], [DAYS[1]])
         self.assertEqual(trail(feed(repeated, (2, "09:35", "WEAK")))[-1], ("EXIT", "PENDING", "AI_WEAK_CROSS_DAY_2"))
 
+    def test_v2_0_1_hold_keeps_the_weak_days_and_only_up_clears_them(self):
+        rules = Rules.v2_0_1("DUAL")
+        held = feed(opened(RANGE, "0.025", rules=rules), (1, "10:35", "WEAK"), (2, "10:35", "HOLD"))
+        self.assertEqual((held["status"], held["weak_trade_days"]), ("OPEN", [DAYS[1]]))
+        feed(held, (3, "09:35", "WEAK"))
+        self.assertEqual((held["status"], held["weak_trade_days"], trail(held)), ("WAIT_EXIT", [DAYS[1], DAYS[3]],
+                         [("REDUCE", "SUPERSEDED", "AI_FIRST_WEAK_REDUCE"), ("EXIT", "PENDING", "AI_WEAK_CROSS_DAY_2")]))
+        up = feed(opened(RANGE, "0.025", rules=rules), (1, "10:35", "WEAK"), (2, "10:35", "UP"))
+        self.assertEqual(up["weak_trade_days"], [])
+        feed(up, (3, "09:35", "WEAK"))
+        self.assertEqual((up["status"], up["weak_trade_days"], trail(up)),
+                         ("OPEN", [DAYS[3]], [("REDUCE", "PENDING", "AI_FIRST_WEAK_REDUCE")]))
+        unknown = feed(opened(RANGE, "0.025", rules=rules), (1, "10:35", "WEAK"), (2, "10:35", "UNKNOWN"))
+        self.assertEqual(unknown["weak_trade_days"], [DAYS[1]])
+        # An UP that only repeats earlier evidence is not a new judgement either.
+        echo = report(2, "13:05", "UP")
+        echo["sectors"][SECTOR].update(duplicate_evidence=True)
+        apply_report(unknown, echo)
+        self.assertEqual(unknown["weak_trade_days"], [DAYS[1]])
+        # The same reports under v2: the HOLD clears the first weak day and the position stays open.
+        old = feed(opened(RANGE, "0.025"), (1, "10:35", "WEAK"), (2, "10:35", "HOLD"), (3, "09:35", "WEAK"))
+        self.assertEqual((old["status"], old["weak_trade_days"]), ("OPEN", [DAYS[3]]))
+
     def test_retreat_clears_and_waiting_buy_is_cancelled(self):
         cycle = feed(opened(RANGE, "0.025"), (1, "09:35", "1.010"), (1, "10:35", "EXIT"))
         order = pending(cycle)
@@ -307,6 +330,17 @@ class Versions(TestCase):
         with self.assertRaises(ValueError):
             Rules(time_exit_enabled=True)
 
+    def test_v2_0_1_is_v2_with_the_hold_rule_and_v2_keeps_its_stored_snapshot(self):
+        old, new = Rules.v2("DUAL").snapshot(), Rules.v2_0_1("DUAL").snapshot()
+        self.assertNotIn("hold_keeps_weak_days", old)
+        self.assertEqual(new, old | dict(version="hermes_signal_cycle_v2_0_1", hold_keeps_weak_days=True))
+        self.assertEqual(Rules(**json.loads(encode(new))), Rules.v2_0_1("DUAL"))
+        for values in (dict(hold_keeps_weak_days=True), dict(version="hermes_signal_cycle_v2_0_1", hold_keeps_weak_days=1)):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                Rules.v2("DUAL", **values)
+        with self.assertRaises(ValueError):
+            Rules(hold_keeps_weak_days=True)
+
     def test_t20_rule_switch_accepts_only_known_versions(self):
         from modules.strategy_hermes.stage2.settings import Settings
         base = dict(APP_ENV="test", DATABASE_URL="postgresql://u:p@127.0.0.1:54320/stock_v4_test",
@@ -318,7 +352,11 @@ class Versions(TestCase):
         for name in ("v2", "hermes_signal_cycle_v2"):
             chosen = Settings.from_values(base | dict(MODEL_EVALUATION_RULE=name, REGIME_MODE="SINGLE")).rules()
             self.assertEqual(chosen, Rules.v2("SINGLE"))
+        for name in ("v2.0.1", "hermes_signal_cycle_v2_0_1"):
+            chosen = Settings.from_values(base | dict(MODEL_EVALUATION_RULE=name, REGIME_MODE="DUAL")).rules()
+            self.assertEqual(chosen, Rules.v2_0_1("DUAL"))
         for values in (dict(MODEL_EVALUATION_RULE="hermes_signal_cycle_v3"), dict(MODEL_EVALUATION_RULE="v2"),
+                       dict(MODEL_EVALUATION_RULE="v2.0.1"), dict(MODEL_EVALUATION_RULE="v2.1", REGIME_MODE="DUAL"),
                        dict(MODEL_EVALUATION_RULE="v2", REGIME_MODE="AUTO"), dict(REGIME_MODE="dual")):
             with self.subTest(values=values), self.assertRaises(ValueError):
                 Settings.from_values(base | values)

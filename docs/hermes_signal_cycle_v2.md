@@ -37,6 +37,7 @@
 
 报告（P5）：明确退潮全清 `AI_RETREAT`；`WEAK` 按交易日去重计数，首次减半 `AI_FIRST_WEAK_REDUCE`，
 跨交易日第 2 次全清 `AI_WEAK_CROSS_DAY_2`；`HOLD`/`UP` 清零，`UNKNOWN` 或板块缺席不变。
+`hermes_signal_cycle_v2_0_1`（`MODEL_EVALUATION_RULE=v2.0.1`）只改这一点：`HOLD` 不再清零，只有 `UP` 清零；其余与 v2 相同。
 `bear_early_weak_exit` 默认关闭；开启后弱势档、未武装、成交次日起、当日最近一条报价低于成本时首次 `WEAK` 直接全清
 `BEAR_EARLY_WEAK_EXIT`。
 
@@ -143,3 +144,21 @@ python -B -m unittest discover -s tests -q   # 全量，需按 README 先起 Pos
 
 * T12（用执行服务器 11/13–11/20 的真实报告与报价回放三个周期）未做成自动化用例：仓库里没有这批生产数据。
 * `invalidation_condition` 未接入。
+
+## 在途 v2 周期改按 v2.0.1
+
+2026-11-21 用户授权（`CLAUDE.md` 第 33 条）：`HOLD` 不再清零转弱计数的规则记为 `hermes_signal_cycle_v2_0_1`，
+执行服务器当时在途的 512800、512480、588100 三笔 v2 周期一并改按它管理。`tools/migrate_cycles_to_exit_v2_0_1.py`
+只处理命令行点名、且周期编号在工具内 `AUTHORISED` 名单里的这三笔；不带 `--apply` 时只读。
+
+```bash
+python -B -m tools.migrate_cycles_to_exit_v2_0_1 --env-file /absolute/.env --etf 512800.SH
+docker exec -i stock-v4-backend python - --etf 512800.SH [--apply] < tools/migrate_cycles_to_exit_v2_0_1.py
+```
+
+* 只接受 `OPEN`、规则为 v2 的周期；已是 v2.0.1 的报告 `ALREADY_V2_0_1` 并跳过，可重复执行。
+* 写入内容：`rule` 换成 v2.0.1 快照（与原快照只差版本名和 `hold_keeps_weak_days`，否则拒绝）；`weak_trade_days`
+  由买入之后已保存的报告按新口径重算（`WEAK` 按交易日计一次，非重复证据的 `UP` 清零，`HOLD` 不变）；
+  `rule_change` 保留时刻、原版本和原计数。成交、订单、现金、持仓和退出计划不变，工具不生成卖单。
+* 输出的 `next_weak_report_exits` 为真时，下一份 `WEAK` 报告会触发 `AI_WEAK_CROSS_DAY_2` 全清，写入前先看这一项。
+* 发布时把 `MODEL_EVALUATION_RULE` 改为 `v2.0.1`，新开的周期才按新规则冻结。
